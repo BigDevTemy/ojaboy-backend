@@ -7,16 +7,44 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  fullName     String   @map("full_name")
-  passwordHash String
-  role         String   @default("user")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  permissions  UserPermission[]
+  id                  String               @id @default(uuid())
+  email               String               @unique
+  fullName            String               @map("full_name")
+  passwordHash        String?
+  authProviders       String[]             @default([])
+  role                String               @default("user")
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  permissions         UserPermission[]
+  passwordSetupTokens PasswordSetupToken[]
+  authProviderLinks   UserAuthProvider[]
 
   @@map("users")
+}
+
+model UserAuthProvider {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  provider       String
+  providerUserId String   @map("provider_user_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@unique([userId, provider])
+  @@map("user_auth_providers")
+}
+
+model PasswordSetupToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_setup_tokens")
 }
 
 model Permission {
@@ -40,4 +68,18 @@ model UserPermission {
 
   @@unique([userId, permissionId])
   @@map("user_permissions")
+}
+
+enum MarketStatus {
+  active
+  inactive
+}
+
+model Market {
+  id            String       @id @default(uuid())
+  marketname    String
+  marketaddress String?
+  status        MarketStatus @default(active)
+
+  @@map("markets")
 }

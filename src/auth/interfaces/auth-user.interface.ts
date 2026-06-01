@@ -3,10 +3,11 @@ export interface AuthUser {
   email: string;
   fullName: string;
   role: string;
+  authProviders: string[];
 }
 
 export interface StoredUser extends AuthUser {
-  passwordHash: string;
+  passwordHash: string | null;
   createdAt: string;
 }
 
