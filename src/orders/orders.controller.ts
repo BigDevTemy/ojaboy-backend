@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { InternalApiTokenGuard } from '../common/guards/internal-api-token.guard';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrdersService } from './orders.service';
 
@@ -9,6 +10,21 @@ export class OrdersController {
   @Get()
   findAll() {
     return this.ordersService.findAll();
+  }
+
+  @Get('user/:email/:orderId')
+  @UseGuards(InternalApiTokenGuard)
+  findUserOrderByEmailAndOrderId(
+    @Param('email') email: string,
+    @Param('orderId') orderId: string,
+  ) {
+    return this.ordersService.findUserOrderByEmailAndOrderId(email, orderId);
+  }
+
+  @Get(':id')
+  @UseGuards(InternalApiTokenGuard)
+  findOne(@Param('id') id: string) {
+    return this.ordersService.findOne(id);
   }
 
   @Post()

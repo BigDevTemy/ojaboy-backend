@@ -1,4 +1,4 @@
-export type EmailTemplateName = 'password-setup' | 'order-status';
+export type EmailTemplateName = 'password-setup' | 'order-status' | 'welcome-note';
 
 export type EmailTemplateVariables = Record<string, string | number | Date>;
 

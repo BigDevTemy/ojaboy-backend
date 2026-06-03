@@ -1,17 +1,29 @@
-import { Module } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
 import { AccessControlModule } from './access-control/access-control.module';
+import { AgentChatboxModule } from './agent-chatbox/agent-chatbox.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { AgentChatboxModule } from './agent-chatbox/agent-chatbox.module';
 import { AuthModule } from './auth/auth.module';
+import { InternalApiTokenMiddleware } from './common/middleware/internal-api-token.middleware';
+import { LogisticsModule } from './logistics/logistics.module';
+import { MarketPricesModule } from './market-prices/market-prices.module';
 import { MarketsModule } from './markets/markets.module';
 import { OrdersModule } from './orders/orders.module';
+import { PaymentsModule } from './payments/payments.module';
+import { PricesModule } from './prices/prices.module';
+import { ProductsModule } from './products/products.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -50,6 +62,12 @@ import { PrismaModule } from './prisma/prisma.module';
     AgentChatboxModule,
     OrdersModule,
     MarketsModule,
+    LogisticsModule,
+    MarketPricesModule,
+    ProductsModule,
+    PricesModule,
+    PaymentsModule,
+    UsersModule,
     AccessControlModule,
   ],
   controllers: [AppController],
@@ -61,4 +79,15 @@ import { PrismaModule } from './prisma/prisma.module';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(InternalApiTokenMiddleware)
+      .forRoutes(
+        { path: 'users/email/:email', method: RequestMethod.GET },
+        { path: 'users/email/:email/orders', method: RequestMethod.GET },
+        { path: 'users/email/:email/orders/last', method: RequestMethod.GET },
+        { path: 'orders/user/:email/:orderId', method: RequestMethod.GET },
+      );
+  }
+}

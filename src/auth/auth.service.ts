@@ -64,6 +64,17 @@ export class AuthService {
       },
     });
 
+    await this.emailService.sendTemplateEmail({
+        to: user.email,
+        template: 'welcome-note',
+        variables: {
+          fullName: user.fullName,
+          dashboardUrl: 'http://localhost:3000/dashboard',
+          headerImageUrl: 'https://res.cloudinary.com/jupit/image/upload/v1780399271/ojaboy-template-header.png',
+          supportEmail: 'support@ojaboy.com',
+        },
+      });
+
     return this.buildAuthResponse(user);
   }
 
@@ -156,6 +167,17 @@ export class AuthService {
           googleUser.providerUserId,
         )
       : await this.createGoogleUser(googleUser);
+
+      await this.emailService.sendTemplateEmail({
+        to: user.email,
+        template: 'welcome-note',
+        variables: {
+          fullName: user.fullName,
+          dashboardUrl: 'https://app.ojaboy.com/dashboard',
+          headerImageUrl: 'https://res.cloudinary.com/jupit/image/upload/v1780399271/ojaboy-template-header.png',
+          supportEmail: 'support@ojaboy.com',
+        },
+      });
 
     return this.buildAuthResponse(user);
   }
