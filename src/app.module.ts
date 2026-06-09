@@ -1,9 +1,4 @@
-import {
-  MiddlewareConsumer,
-  Module,
-  NestModule,
-  RequestMethod,
-} from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -14,7 +9,6 @@ import { AgentChatboxModule } from './agent-chatbox/agent-chatbox.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
-import { InternalApiTokenMiddleware } from './common/middleware/internal-api-token.middleware';
 import { LogisticsModule } from './logistics/logistics.module';
 import { MarketPricesModule } from './market-prices/market-prices.module';
 import { MarketsModule } from './markets/markets.module';
@@ -79,15 +73,4 @@ import { UsersModule } from './users/users.module';
     },
   ],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    consumer
-      .apply(InternalApiTokenMiddleware)
-      .forRoutes(
-        { path: 'users/email/:email', method: RequestMethod.GET },
-        { path: 'users/email/:email/orders', method: RequestMethod.GET },
-        { path: 'users/email/:email/orders/last', method: RequestMethod.GET },
-        { path: 'orders/user/:email/:orderId', method: RequestMethod.GET },
-      );
-  }
-}
+export class AppModule {}

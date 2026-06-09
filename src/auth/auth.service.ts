@@ -11,19 +11,24 @@ import { JwtService } from '@nestjs/jwt';
 import { User } from '@prisma/client';
 import { compare, hash } from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt } from 'node:crypto';
 import { EmailService } from '../mail/email.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ForgetPasswordDto } from './dto/forget-password.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { RequestOrderOtpDto } from './dto/request-order-otp.dto';
 import { SetPasswordDto } from './dto/set-password.dto';
+import { VerifyOrderOtpDto } from './dto/verify-order-otp.dto';
 import { AuthUser, JwtPayload } from './interfaces/auth-user.interface';
 
 const PASSWORD_AUTH_PROVIDER = 'password';
 const GOOGLE_AUTH_PROVIDER = 'google';
 const PASSWORD_SETUP_TOKEN_TTL_MS = 1000 * 60 * 60;
+const ORDER_OTP_TTL_MS = 1000 * 60 * 10;
+const ORDER_TOKEN_TTL_MS = 1000 * 60 * 30;
+const ORDER_OTP_MAX_ATTEMPTS = 5;
 
 @Injectable()
 export class AuthService {
@@ -65,15 +70,16 @@ export class AuthService {
     });
 
     await this.emailService.sendTemplateEmail({
-        to: user.email,
-        template: 'welcome-note',
-        variables: {
-          fullName: user.fullName,
-          dashboardUrl: 'http://localhost:3000/dashboard',
-          headerImageUrl: 'https://res.cloudinary.com/jupit/image/upload/v1780399271/ojaboy-template-header.png',
-          supportEmail: 'support@ojaboy.com',
-        },
-      });
+      to: user.email,
+      template: 'welcome-note',
+      variables: {
+        fullName: user.fullName,
+        dashboardUrl: 'http://localhost:3000/dashboard',
+        headerImageUrl:
+          'https://res.cloudinary.com/jupit/image/upload/v1780399271/ojaboy-template-header.png',
+        supportEmail: 'support@ojaboy.com',
+      },
+    });
 
     return this.buildAuthResponse(user);
   }
@@ -168,16 +174,17 @@ export class AuthService {
         )
       : await this.createGoogleUser(googleUser);
 
-      await this.emailService.sendTemplateEmail({
-        to: user.email,
-        template: 'welcome-note',
-        variables: {
-          fullName: user.fullName,
-          dashboardUrl: 'https://app.ojaboy.com/dashboard',
-          headerImageUrl: 'https://res.cloudinary.com/jupit/image/upload/v1780399271/ojaboy-template-header.png',
-          supportEmail: 'support@ojaboy.com',
-        },
-      });
+    await this.emailService.sendTemplateEmail({
+      to: user.email,
+      template: 'welcome-note',
+      variables: {
+        fullName: user.fullName,
+        dashboardUrl: 'https://app.ojaboy.com/dashboard',
+        headerImageUrl:
+          'https://res.cloudinary.com/jupit/image/upload/v1780399271/ojaboy-template-header.png',
+        supportEmail: 'support@ojaboy.com',
+      },
+    });
 
     return this.buildAuthResponse(user);
   }
@@ -190,6 +197,94 @@ export class AuthService {
       message:
         'If an account exists for this email, a password reset instruction will be sent.',
       email,
+    };
+  }
+
+  async requestOrderOtp(dto: RequestOrderOtpDto) {
+    const email = dto.email.toLowerCase().trim();
+    const existingUser = await this.findStoredUserByEmail(email);
+    const fullName = dto.fullName?.trim() || existingUser?.fullName;
+
+    if (!fullName) {
+      throw new BadRequestException(
+        'fullName is required when ordering with a new email address',
+      );
+    }
+
+    const otp = randomInt(0, 1_000_000).toString().padStart(6, '0');
+    const expiresAt = new Date(Date.now() + ORDER_OTP_TTL_MS);
+
+    await this.prisma.$transaction([
+      this.prisma.orderOtpChallenge.deleteMany({
+        where: { email, consumedAt: null },
+      }),
+      this.prisma.orderOtpChallenge.create({
+        data: {
+          email,
+          fullName,
+          codeHash: this.hashOrderOtp(email, otp),
+          expiresAt,
+        },
+      }),
+    ]);
+
+    await this.emailService.sendTemplateEmail({
+      to: email,
+      template: 'order-otp',
+      variables: {
+        fullName,
+        otp,
+        expiresIn: '10 minutes',
+      },
+    });
+
+    return {
+      message: 'A verification code has been sent to your email.',
+      email,
+      expiresIn: 600,
+    };
+  }
+
+  async verifyOrderOtp(dto: VerifyOrderOtpDto) {
+    const email = dto.email.toLowerCase().trim();
+    const challenge = await this.prisma.orderOtpChallenge.findFirst({
+      where: { email, consumedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (
+      !challenge ||
+      challenge.expiresAt.getTime() < Date.now() ||
+      challenge.attempts >= ORDER_OTP_MAX_ATTEMPTS
+    ) {
+      throw new UnauthorizedException('OTP is invalid or expired');
+    }
+
+    if (challenge.codeHash !== this.hashOrderOtp(email, dto.otp)) {
+      await this.prisma.orderOtpChallenge.update({
+        where: { id: challenge.id },
+        data: { attempts: { increment: 1 } },
+      });
+      throw new UnauthorizedException('OTP is invalid or expired');
+    }
+
+    const orderToken = randomBytes(32).toString('hex');
+    const orderTokenExpiresAt = new Date(Date.now() + ORDER_TOKEN_TTL_MS);
+
+    await this.prisma.orderOtpChallenge.update({
+      where: { id: challenge.id },
+      data: {
+        verifiedAt: new Date(),
+        orderTokenHash: this.hashToken(orderToken),
+        orderTokenExpiresAt,
+      },
+    });
+
+    return {
+      message: 'Email verified successfully.',
+      email,
+      orderToken,
+      expiresIn: 1800,
     };
   }
 
@@ -329,6 +424,15 @@ export class AuthService {
 
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
+  }
+
+  private hashOrderOtp(email: string, otp: string): string {
+    const secret =
+      this.configService.get<string>('ORDER_OTP_SECRET') ??
+      this.configService.get<string>('JWT_SECRET') ??
+      'dev-order-otp-secret';
+
+    return createHmac('sha256', secret).update(`${email}:${otp}`).digest('hex');
   }
 
   private buildAuthResponse(user: User) {

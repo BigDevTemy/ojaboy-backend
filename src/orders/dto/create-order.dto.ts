@@ -1,64 +1,22 @@
-import { PriceUnit } from '@prisma/client';
-import { Type } from 'class-transformer';
 import {
-  IsArray,
-  IsEnum,
-  IsNumber,
+  IsEmail,
   IsOptional,
   IsString,
-  IsUUID,
-  Min,
-  ValidateNested,
+  MaxLength,
+  MinLength,
 } from 'class-validator';
+import { QuoteOrderDto } from './quote-order.dto';
 
-export class CreateOrderItemDto {
-  @IsOptional()
-  @IsUUID()
-  productId?: string;
+export class CreateOrderDto extends QuoteOrderDto {
+  @IsEmail()
+  email: string;
 
-  @IsOptional()
-  @IsUUID()
-  buyPriceId?: string;
-
-  @IsNumber()
-  @Min(1)
-  quantity: number;
-
-  @IsOptional()
-  @IsEnum(PriceUnit)
-  unit?: PriceUnit;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  unitPrice?: number;
-}
-
-export class CreateOrderDto {
-  @IsOptional()
-  @IsUUID()
-  userId?: string;
+  @IsString()
+  @MinLength(32)
+  orderToken: string;
 
   @IsOptional()
   @IsString()
-  userEmail?: string;
-
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => CreateOrderItemDto)
-  items: CreateOrderItemDto[];
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  serviceFee?: number;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  deliveryFee?: number;
-
-  @IsOptional()
-  @IsString()
+  @MaxLength(500)
   note?: string;
 }

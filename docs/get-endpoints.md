@@ -32,6 +32,7 @@ GET /markets/:id
 ```text
 GET /products
 GET /products?search=tomato
+GET /products?search=tomato&limit=20&offset=0
 GET /products?category=Vegetables
 GET /products/category/:category
 GET /products/:id

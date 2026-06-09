@@ -114,6 +114,39 @@ const templates: Record<EmailTemplateName, EmailTemplate> = {
       ].join('\n');
     },
   },
+  'order-otp': {
+    subject: () => 'Your Ojaboy order verification code',
+    html: (variables) => {
+      const fullName = escapeHtml(getValue(variables, 'fullName', 'there'));
+      const otp = escapeHtml(getValue(variables, 'otp'));
+      const expiresIn = escapeHtml(
+        getValue(variables, 'expiresIn', '10 minutes'),
+      );
+
+      return `
+        <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
+          <h2 style="margin: 0 0 16px;">Verify your order</h2>
+          <p>Hello ${fullName},</p>
+          <p>Use this code to continue placing your Ojaboy order:</p>
+          <p style="font-size: 32px; font-weight: 700; letter-spacing: 8px;">${otp}</p>
+          <p>This code expires in ${expiresIn}. Do not share it with anyone.</p>
+        </div>
+      `;
+    },
+    text: (variables) => {
+      const fullName = getValue(variables, 'fullName', 'there');
+      const otp = getValue(variables, 'otp');
+      const expiresIn = getValue(variables, 'expiresIn', '10 minutes');
+
+      return [
+        `Hello ${fullName},`,
+        '',
+        `Your Ojaboy order verification code is: ${otp}`,
+        `This code expires in ${expiresIn}.`,
+        'Do not share it with anyone.',
+      ].join('\n');
+    },
+  },
   'welcome-note': {
     subject: (variables) => {
       const fullName = getValue(variables, 'fullName', 'there');

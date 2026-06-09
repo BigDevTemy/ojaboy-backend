@@ -49,6 +49,24 @@ model PasswordSetupToken {
   @@map("password_setup_tokens")
 }
 
+model OrderOtpChallenge {
+  id                 String    @id @default(uuid())
+  email              String
+  fullName           String?   @map("full_name")
+  codeHash           String    @map("code_hash")
+  expiresAt          DateTime  @map("expires_at")
+  attempts           Int       @default(0)
+  verifiedAt         DateTime? @map("verified_at")
+  orderTokenHash     String?   @unique @map("order_token_hash")
+  orderTokenExpiresAt DateTime? @map("order_token_expires_at")
+  consumedAt         DateTime? @map("consumed_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  @@index([email, createdAt])
+  @@index([expiresAt])
+  @@map("order_otp_challenges")
+}
+
 model Permission {
   id          String           @id @default(uuid())
   name        String           @unique

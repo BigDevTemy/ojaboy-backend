@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { InternalApiTokenGuard } from '../common/guards/internal-api-token.guard';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { QuoteOrderDto } from './dto/quote-order.dto';
 import { OrdersService } from './orders.service';
 
 @Controller('orders')
@@ -30,5 +31,10 @@ export class OrdersController {
   @Post()
   create(@Body() createOrderDto: CreateOrderDto) {
     return this.ordersService.create(createOrderDto);
+  }
+
+  @Post('quote')
+  quote(@Body() quoteOrderDto: QuoteOrderDto) {
+    return this.ordersService.quote(quoteOrderDto);
   }
 }

@@ -8,7 +8,12 @@ import { UpdateProductDto } from './dto/update-product.dto';
 type ProductFilters = {
   search?: string;
   category?: ProductCategory;
+  limit?: string;
+  offset?: string;
 };
+
+const DEFAULT_PRODUCT_LIMIT = 20;
+const MAX_PRODUCT_LIMIT = 50;
 
 @Injectable()
 export class ProductsService {
@@ -27,13 +32,18 @@ export class ProductsService {
   }
 
   async findAll(filters: ProductFilters = {}) {
-    const products = await this.prisma.product.findMany({
+    const pagination = this.toPagination(filters);
+    const queryArgs = {
       where: this.toWhereInput(filters),
-      include: { marketPrices: true, buyPrices: true },
+      include: this.toProductListInclude(),
       orderBy: { name: 'asc' },
-    });
+      take: pagination.limit,
+      skip: pagination.offset,
+    } satisfies Prisma.ProductFindManyArgs;
 
-    return { data: products };
+    const products = await this.findManyWithConnectionRetry(queryArgs);
+
+    return { data: products, meta: pagination };
   }
 
   async findByCategory(category: ProductCategory) {
@@ -121,16 +131,104 @@ export class ProductsService {
   }
 
   private toWhereInput(filters: ProductFilters): Prisma.ProductWhereInput {
+    const search = filters.search?.trim();
+
     return {
       category: filters.category,
-      OR: filters.search
+      OR: search
         ? [
-            { name: { contains: filters.search, mode: 'insensitive' } },
-            { sku: { contains: filters.search, mode: 'insensitive' } },
-            { description: { contains: filters.search, mode: 'insensitive' } },
+            { name: { contains: search, mode: 'insensitive' } },
+            { sku: { contains: search, mode: 'insensitive' } },
+            { description: { contains: search, mode: 'insensitive' } },
           ]
         : undefined,
     };
+  }
+
+  private toProductListInclude(): Prisma.ProductInclude {
+    return {
+      marketPrices: {
+        orderBy: { observedAt: 'desc' },
+        take: 5,
+        include: {
+          market: {
+            select: { id: true, marketname: true, marketaddress: true },
+          },
+        },
+      },
+      buyPrices: {
+        where: { isActive: true },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        include: {
+          market: {
+            select: { id: true, marketname: true, marketaddress: true },
+          },
+        },
+      },
+    };
+  }
+
+  private toPagination(filters: ProductFilters) {
+    return {
+      limit: this.toBoundedInteger(
+        filters.limit,
+        DEFAULT_PRODUCT_LIMIT,
+        MAX_PRODUCT_LIMIT,
+      ),
+      offset: this.toBoundedInteger(filters.offset, 0, Number.MAX_SAFE_INTEGER),
+    };
+  }
+
+  private toBoundedInteger(
+    value: string | undefined,
+    fallback: number,
+    max: number,
+  ) {
+    const parsed = Number(value);
+
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      return fallback;
+    }
+
+    return Math.min(parsed, max);
+  }
+
+  private async findManyWithConnectionRetry(args: Prisma.ProductFindManyArgs) {
+    try {
+      return await this.prisma.product.findMany(args);
+    } catch (error) {
+      if (!this.isTransientConnectionError(error)) {
+        throw error;
+      }
+
+      await this.delay(100);
+
+      return this.prisma.product.findMany(args);
+    }
+  }
+
+  private delay(milliseconds: number) {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  }
+
+  private isTransientConnectionError(error: unknown): boolean {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P1017'
+    ) {
+      return true;
+    }
+
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    return [
+      'Connection terminated due to connection timeout',
+      'Connection terminated unexpectedly',
+      'Server has closed the connection',
+    ].some((message) => error.message.includes(message));
   }
 
   private isRecordNotFound(error: unknown): boolean {

@@ -6,7 +6,9 @@ import { ForgetPasswordDto } from './dto/forget-password.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { RequestOrderOtpDto } from './dto/request-order-otp.dto';
 import { SetPasswordDto } from './dto/set-password.dto';
+import { VerifyOrderOtpDto } from './dto/verify-order-otp.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import type { AuthUser } from './interfaces/auth-user.interface';
 
@@ -42,6 +44,18 @@ export class AuthController {
   @Post('set-password')
   setPassword(@Body() setPasswordDto: SetPasswordDto) {
     return this.authService.setPassword(setPasswordDto);
+  }
+
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
+  @Post('order-otp/request')
+  requestOrderOtp(@Body() dto: RequestOrderOtpDto) {
+    return this.authService.requestOrderOtp(dto);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('order-otp/verify')
+  verifyOrderOtp(@Body() dto: VerifyOrderOtpDto) {
+    return this.authService.verifyOrderOtp(dto);
   }
 
   @UseGuards(JwtAuthGuard)

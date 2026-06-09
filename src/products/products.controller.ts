@@ -27,8 +27,10 @@ export class ProductsController {
   findAll(
     @Query('search') search?: string,
     @Query('category') category?: ProductCategory,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
-    return this.productsService.findAll({ search, category });
+    return this.productsService.findAll({ search, category, limit, offset });
   }
 
   @Get('category/:category')
