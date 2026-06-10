@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
   Injectable,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -247,45 +248,60 @@ export class AuthService {
 
   async verifyOrderOtp(dto: VerifyOrderOtpDto) {
     const email = dto.email.toLowerCase().trim();
-    const challenge = await this.prisma.orderOtpChallenge.findFirst({
-      where: { email, consumedAt: null },
-      orderBy: { createdAt: 'desc' },
-    });
+    try {
+      const challenge = await this.prisma.orderOtpChallenge.findFirst({
+        where: { email, consumedAt: null },
+        orderBy: { createdAt: 'desc' },
+      });
 
-    if (
-      !challenge ||
-      challenge.expiresAt.getTime() < Date.now() ||
-      challenge.attempts >= ORDER_OTP_MAX_ATTEMPTS
-    ) {
-      throw new UnauthorizedException('OTP is invalid or expired');
-    }
+      if (
+        !challenge ||
+        challenge.expiresAt.getTime() < Date.now() ||
+        challenge.attempts >= ORDER_OTP_MAX_ATTEMPTS
+      ) {
+        throw new UnauthorizedException('OTP is invalid or expired');
+      }
 
-    if (challenge.codeHash !== this.hashOrderOtp(email, dto.otp)) {
+      if (challenge.codeHash !== this.hashOrderOtp(email, dto.otp)) {
+        await this.prisma.orderOtpChallenge.update({
+          where: { id: challenge.id },
+          data: { attempts: { increment: 1 } },
+        });
+        throw new UnauthorizedException('OTP is invalid or expired');
+      }
+
+      const orderToken = randomBytes(32).toString('hex');
+      const orderTokenExpiresAt = new Date(Date.now() + ORDER_TOKEN_TTL_MS);
+
       await this.prisma.orderOtpChallenge.update({
         where: { id: challenge.id },
-        data: { attempts: { increment: 1 } },
+        data: {
+          verifiedAt: new Date(),
+          orderTokenHash: this.hashToken(orderToken),
+          orderTokenExpiresAt,
+        },
       });
-      throw new UnauthorizedException('OTP is invalid or expired');
+
+      return {
+        message: 'Email verified successfully.',
+        email,
+        orderToken,
+        expiresIn: 1800,
+      };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+
+      this.logger.error(
+        `Order OTP verification failed for email ${email}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+
+      throw new ServiceUnavailableException(
+        'Unable to verify OTP at this time. Please try again later.',
+      );
     }
-
-    const orderToken = randomBytes(32).toString('hex');
-    const orderTokenExpiresAt = new Date(Date.now() + ORDER_TOKEN_TTL_MS);
-
-    await this.prisma.orderOtpChallenge.update({
-      where: { id: challenge.id },
-      data: {
-        verifiedAt: new Date(),
-        orderTokenHash: this.hashToken(orderToken),
-        orderTokenExpiresAt,
-      },
-    });
-
-    return {
-      message: 'Email verified successfully.',
-      email,
-      orderToken,
-      expiresIn: 1800,
-    };
   }
 
   async findAuthUserById(id: string): Promise<AuthUser | undefined> {
