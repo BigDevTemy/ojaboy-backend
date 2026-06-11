@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
 import { AccessControlModule } from './access-control/access-control.module';
@@ -11,6 +11,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { CommerceConfigModule } from './commerce-config/commerce-config.module';
+import { ClientIpThrottlerGuard } from './common/guards/client-ip-throttler.guard';
 import { LogisticsModule } from './logistics/logistics.module';
 import { MarketPricesModule } from './market-prices/market-prices.module';
 import { MarketsModule } from './markets/markets.module';
@@ -73,7 +74,7 @@ import { UsersModule } from './users/users.module';
     AppService,
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: ClientIpThrottlerGuard,
     },
   ],
 })

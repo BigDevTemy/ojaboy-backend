@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { BulkCalculateBuyPricesDto } from './dto/bulk-calculate-buy-prices.dto';
 import { CalculateBuyPriceDto } from './dto/calculate-buy-price.dto';
 import { CreatePriceDto } from './dto/create-price.dto';
@@ -14,6 +15,7 @@ import { UpdatePriceDto } from './dto/update-price.dto';
 import { PricesService } from './prices.service';
 
 @Controller('buy-prices')
+@Throttle({ default: { limit: 300, ttl: 60000 } })
 export class PricesController {
   constructor(private readonly pricesService: PricesService) {}
 
