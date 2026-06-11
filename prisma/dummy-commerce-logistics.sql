@@ -2,24 +2,26 @@ INSERT INTO delivery_zones (
   id,
   name,
   description,
+  delivery_cost,
   is_active,
   created_at,
   updated_at
 ) VALUES
-  ('b2b8a6b9-7df7-4ff3-8bd7-64d6cd9f3121', 'Yaba', 'Mainland zone covering Yaba, Akoka, Sabo, Onike and nearby communities.', TRUE, NOW(), NOW()),
-  ('d1c1e9e7-84e6-4591-bb68-a58337c30e4f', 'Ikeja', 'Central mainland zone covering Ikeja, Opebi, Allen, Alausa and Maryland.', TRUE, NOW(), NOW()),
-  ('fd822824-ffcc-4c19-9e9f-bf6e32f03f25', 'Lekki', 'Island zone covering Lekki Phase 1, Ikate, Marwa and nearby communities.', TRUE, NOW(), NOW()),
-  ('84e771bb-c33e-48ae-9f88-b34618dc1db9', 'Surulere', 'Mainland zone covering Surulere, Aguda, Bode Thomas and Ojuelegba.', TRUE, NOW(), NOW()),
-  ('4ce7b765-9716-4521-93c8-fda2636461e8', 'Ajah', 'Island corridor zone covering Ajah, Sangotedo, Badore and Abraham Adesanya.', TRUE, NOW(), NOW()),
-  ('1ddf588e-bb89-4aa7-90a8-0ff450848b61', 'Victoria Island', 'Island business district covering Victoria Island, Oniru and Eko Atlantic.', TRUE, NOW(), NOW()),
-  ('a1cd219a-0a1b-4b96-8761-75a02991fec5', 'Ikoyi', 'Island zone covering Ikoyi, Banana Island, Osborne and Parkview.', TRUE, NOW(), NOW()),
-  ('5d14dc1a-12bc-46cc-a337-85a4de7ef629', 'Lagos Island', 'Central island zone covering Marina, CMS, Obalende and Idumota.', TRUE, NOW(), NOW()),
-  ('da058c15-77ae-437c-99d3-edb8fdf94ad7', 'Gbagada', 'Mainland zone covering Gbagada, Ifako, Soluyi and Medina Estate.', TRUE, NOW(), NOW()),
-  ('66871b94-f7fc-40ac-a27c-fd2bc258f05f', 'Kosofe', 'Mainland zone covering Ogudu, Ojota, Ketu, Mile 12 and Alapere.', TRUE, NOW(), NOW()),
-  ('375f5376-3030-44a7-a472-4a47cc8c4ff1', 'Amuwo Odofin', 'Western mainland zone covering Festac, Amuwo Odofin, Apple Junction and Mile 2.', TRUE, NOW(), NOW()),
-  ('a528de87-c509-408b-a438-d5d46a341a17', 'Alimosho', 'Mainland zone covering Egbeda, Akowonjo, Idimu, Ipaja and Ikotun.', TRUE, NOW(), NOW())
+  ('b2b8a6b9-7df7-4ff3-8bd7-64d6cd9f3121', 'Yaba', 'Mainland zone covering Yaba, Akoka, Sabo, Onike and nearby communities.', 1500, TRUE, NOW(), NOW()),
+  ('d1c1e9e7-84e6-4591-bb68-a58337c30e4f', 'Ikeja', 'Central mainland zone covering Ikeja, Opebi, Allen, Alausa and Maryland.', 1750, TRUE, NOW(), NOW()),
+  ('fd822824-ffcc-4c19-9e9f-bf6e32f03f25', 'Lekki', 'Island zone covering Lekki Phase 1, Ikate, Marwa and nearby communities.', 2500, TRUE, NOW(), NOW()),
+  ('84e771bb-c33e-48ae-9f88-b34618dc1db9', 'Surulere', 'Mainland zone covering Surulere, Aguda, Bode Thomas and Ojuelegba.', 1750, TRUE, NOW(), NOW()),
+  ('4ce7b765-9716-4521-93c8-fda2636461e8', 'Ajah', 'Island corridor zone covering Ajah, Sangotedo, Badore and Abraham Adesanya.', 3000, TRUE, NOW(), NOW()),
+  ('1ddf588e-bb89-4aa7-90a8-0ff450848b61', 'Victoria Island', 'Island business district covering Victoria Island, Oniru and Eko Atlantic.', 2500, TRUE, NOW(), NOW()),
+  ('a1cd219a-0a1b-4b96-8761-75a02991fec5', 'Ikoyi', 'Island zone covering Ikoyi, Banana Island, Osborne and Parkview.', 2750, TRUE, NOW(), NOW()),
+  ('5d14dc1a-12bc-46cc-a337-85a4de7ef629', 'Lagos Island', 'Central island zone covering Marina, CMS, Obalende and Idumota.', 2250, TRUE, NOW(), NOW()),
+  ('da058c15-77ae-437c-99d3-edb8fdf94ad7', 'Gbagada', 'Mainland zone covering Gbagada, Ifako, Soluyi and Medina Estate.', 1750, TRUE, NOW(), NOW()),
+  ('66871b94-f7fc-40ac-a27c-fd2bc258f05f', 'Kosofe', 'Mainland zone covering Ogudu, Ojota, Ketu, Mile 12 and Alapere.', 1750, TRUE, NOW(), NOW()),
+  ('375f5376-3030-44a7-a472-4a47cc8c4ff1', 'Amuwo Odofin', 'Western mainland zone covering Festac, Amuwo Odofin, Apple Junction and Mile 2.', 2500, TRUE, NOW(), NOW()),
+  ('a528de87-c509-408b-a438-d5d46a341a17', 'Alimosho', 'Mainland zone covering Egbeda, Akowonjo, Idimu, Ipaja and Ikotun.', 2500, TRUE, NOW(), NOW())
 ON CONFLICT (name) DO UPDATE SET
   description = EXCLUDED.description,
+  delivery_cost = EXCLUDED.delivery_cost,
   is_active = EXCLUDED.is_active,
   updated_at = NOW();
 

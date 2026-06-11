@@ -19,6 +19,7 @@ export class LogisticsService {
       data: {
         name: dto.name.trim(),
         description: dto.description?.trim(),
+        deliveryCost: dto.deliveryCost,
         isActive: dto.isActive,
       },
     });
@@ -127,6 +128,7 @@ export class LogisticsService {
         data: {
           name: dto.name?.trim(),
           description: dto.description?.trim(),
+          deliveryCost: dto.deliveryCost,
           isActive: dto.isActive,
         },
       });

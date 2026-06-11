@@ -1,4 +1,12 @@
-import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 export class CreateDeliveryZoneDto {
   @IsString()
@@ -8,6 +16,11 @@ export class CreateDeliveryZoneDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  deliveryCost: number;
 
   @IsOptional()
   @IsBoolean()

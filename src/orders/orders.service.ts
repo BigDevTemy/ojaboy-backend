@@ -349,8 +349,7 @@ export class OrdersService {
       throw new UnprocessableEntityException({
         statusCode: 422,
         code: 'CUSTOMER_REQUIRED_FOR_DELIVERY',
-        message:
-          'A customer account is required to calculate delivery.',
+        message: 'A customer account is required to calculate delivery.',
       });
     }
 
@@ -438,7 +437,6 @@ export class OrdersService {
       db,
     );
     const deliveryFee = await this.calculateDeliveryFee(
-      items,
       deliveryAddress.deliveryZoneId,
       db,
     );
@@ -480,59 +478,33 @@ export class OrdersService {
   }
 
   private async calculateDeliveryFee(
-    items: PreparedOrderItem[],
     deliveryZoneId: string,
     db: DatabaseClient = this.prisma,
   ): Promise<number> {
-    const marketIds = [
-      ...new Set(items.map((item) => item.marketId).filter(Boolean)),
-    ] as string[];
-
-    if (marketIds.length === 0) {
-      throw new BadRequestException(
-        'Delivery cannot be quoted because the selected prices have no market',
-      );
-    }
-
-    const deliveryCosts = await db.marketDeliveryCost.findMany({
-      where: {
-        deliveryZoneId,
-        marketId: { in: marketIds },
-        isActive: true,
-      },
+    const deliveryZone = await db.deliveryZone.findUnique({
+      where: { id: deliveryZoneId },
     });
 
-    if (deliveryCosts.length !== marketIds.length) {
+    if (!deliveryZone?.isActive) {
       throw new UnprocessableEntityException({
         statusCode: 422,
-        code: 'MARKET_DELIVERY_COST_MISSING',
-        message:
-          'Delivery is not available from every selected market to the selected address zone.',
+        code: 'DELIVERY_ZONE_UNAVAILABLE',
+        message: 'Delivery is not available for the selected address zone.',
         deliveryZoneId,
-        missingMarketIds: marketIds.filter(
-          (marketId) =>
-            !deliveryCosts.some(
-              (deliveryCost) => deliveryCost.marketId === marketId,
-            ),
-        ),
       });
     }
 
     const deliveryFee = this.roundMoney(
-      deliveryCosts.reduce(
-        (sum, deliveryCost) => sum + this.toNumber(deliveryCost.cost),
-        0,
-      ),
+      this.toNumber(deliveryZone.deliveryCost),
     );
 
     if (deliveryFee <= 0) {
       throw new UnprocessableEntityException({
         statusCode: 422,
-        code: 'INVALID_DELIVERY_COST_CONFIGURATION',
+        code: 'DELIVERY_ZONE_COST_MISSING',
         message:
-          'A positive delivery cost has not been configured for this order route.',
+          'A positive delivery cost has not been configured for this delivery zone.',
         deliveryZoneId,
-        marketIds,
       });
     }
 
