@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -31,6 +32,11 @@ export class AddressesController {
   @Get(':id')
   findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.addressesService.findOne(user.id, id);
+  }
+
+  @Patch(':id/default')
+  setDefault(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.addressesService.setDefault(user.id, id);
   }
 
   @Delete(':id')

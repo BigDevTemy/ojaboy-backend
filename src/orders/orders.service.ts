@@ -4,10 +4,15 @@ import {
   Logger,
   NotFoundException,
   UnauthorizedException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CouponDiscountType, PriceUnit, Prisma, User } from '@prisma/client';
 import { createHash } from 'node:crypto';
+import {
+  AddressesService,
+  ResolvedDeliveryAddress,
+} from '../addresses/addresses.service';
 import { EmailService } from '../mail/email.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -36,7 +41,22 @@ type OrderQuote = {
   deliveryFee: number;
   total: number;
   currency: string;
-  deliveryZoneId?: string;
+  deliveryAddressId?: string;
+  deliveryZoneId: string;
+  deliveryAddress: {
+    id?: string;
+    label: string | null;
+    recipientName: string;
+    phoneNumber: string;
+    formattedAddress: string;
+    googlePlaceId: string;
+    latitude: number;
+    longitude: number;
+    deliveryZone: {
+      id: string;
+      name: string;
+    };
+  };
   promotionId?: string;
   promotionName?: string;
   promotionDiscount: number;
@@ -57,6 +77,7 @@ export class OrdersService {
     private readonly configService: ConfigService,
     private readonly emailService: EmailService,
     private readonly prisma: PrismaService,
+    private readonly addressesService: AddressesService,
   ) {}
 
   async findAll() {
@@ -96,17 +117,42 @@ export class OrdersService {
   }
 
   async quote(dto: QuoteOrderDto) {
-    const customer = dto.customerEmail
-      ? await this.prisma.user.findUnique({
-          where: { email: dto.customerEmail.toLowerCase().trim() },
-          select: { id: true, email: true },
-        })
-      : null;
-    const quote = await this.calculateQuote(dto, customer ?? undefined);
+    if (!dto.customerEmail) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'CUSTOMER_EMAIL_REQUIRED_FOR_DELIVERY',
+        message:
+          'customerEmail is required so the delivery address can be associated with the customer.',
+      });
+    }
+
+    const customer = await this.prisma.user.findUnique({
+      where: { email: dto.customerEmail.toLowerCase().trim() },
+      select: { id: true, email: true },
+    });
+
+    if (!customer) {
+      throw new NotFoundException({
+        statusCode: 404,
+        code: 'CUSTOMER_NOT_FOUND',
+        message:
+          'No customer account was found for this email. Create the customer account before requesting a quote.',
+      });
+    }
+
+    const quote = await this.calculateQuote(dto, customer);
+    const { deliveryAddress, ...publicQuote } = quote;
 
     return {
       message: 'Order quote calculated successfully.',
-      quote,
+      quote: {
+        ...publicQuote,
+        deliveryAddress: {
+          id: deliveryAddress.id,
+          label: deliveryAddress.label,
+          deliveryZone: deliveryAddress.deliveryZone,
+        },
+      },
     };
   }
 
@@ -167,10 +213,22 @@ export class OrdersService {
           dto,
           { id: user.id, email: user.email },
           tx,
+          true,
         );
+
+        if (!quote.deliveryAddressId) {
+          throw new UnprocessableEntityException({
+            statusCode: 422,
+            code: 'DELIVERY_ADDRESS_NOT_SAVED',
+            message: 'The delivery address could not be saved for this order.',
+          });
+        }
+
         const order = await tx.order.create({
           data: {
             userId: user.id,
+            deliveryAddressId: quote.deliveryAddressId,
+            deliveryZoneId: quote.deliveryZoneId,
             serviceFeeRuleId: quote.serviceFeeRuleId,
             promotionId: quote.promotionId,
             couponId: quote.couponId,
@@ -185,6 +243,12 @@ export class OrdersService {
             total: quote.total,
             couponCode: quote.couponCode,
             promotionName: quote.promotionName,
+            deliveryRecipientName: quote.deliveryAddress.recipientName,
+            deliveryPhoneNumber: quote.deliveryAddress.phoneNumber,
+            deliveryAddress: quote.deliveryAddress.formattedAddress,
+            deliveryGooglePlaceId: quote.deliveryAddress.googlePlaceId,
+            deliveryLatitude: quote.deliveryAddress.latitude,
+            deliveryLongitude: quote.deliveryAddress.longitude,
             note: dto.note?.trim(),
             items: {
               create: quote.items.map((item) => ({
@@ -279,7 +343,29 @@ export class OrdersService {
     dto: QuoteOrderDto,
     customer?: QuoteCustomer,
     db: DatabaseClient = this.prisma,
+    persistSuppliedAddress = false,
   ): Promise<OrderQuote> {
+    if (!customer) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'CUSTOMER_REQUIRED_FOR_DELIVERY',
+        message:
+          'A customer account is required to calculate delivery.',
+      });
+    }
+
+    const deliveryAddress: ResolvedDeliveryAddress = dto.deliveryAddress
+      ? persistSuppliedAddress
+        ? await this.addressesService.getOrCreateOrderAddress(
+            customer.id,
+            dto.deliveryAddress,
+            db,
+          )
+        : await this.addressesService.resolveOrderAddress(
+            dto.deliveryAddress,
+            db,
+          )
+      : await this.addressesService.getValidatedDefaultAddress(customer.id, db);
     const buyPriceIds = [...new Set(dto.items.map((item) => item.buyPriceId))];
     const buyPrices = await db.buyPrice.findMany({
       where: { id: { in: buyPriceIds } },
@@ -353,7 +439,7 @@ export class OrdersService {
     );
     const deliveryFee = await this.calculateDeliveryFee(
       items,
-      dto.deliveryZoneId,
+      deliveryAddress.deliveryZoneId,
       db,
     );
 
@@ -374,19 +460,30 @@ export class OrdersService {
       deliveryFee,
       total: this.roundMoney(discountedSubtotal + fee.amount + deliveryFee),
       currency: items[0].currency,
-      deliveryZoneId: dto.deliveryZoneId,
+      deliveryAddressId: deliveryAddress.id,
+      deliveryZoneId: deliveryAddress.deliveryZoneId,
+      deliveryAddress: {
+        id: deliveryAddress.id,
+        label: deliveryAddress.label,
+        recipientName: deliveryAddress.recipientName,
+        phoneNumber: deliveryAddress.phoneNumber,
+        formattedAddress: deliveryAddress.formattedAddress,
+        googlePlaceId: deliveryAddress.googlePlaceId,
+        latitude: this.toNumber(deliveryAddress.latitude),
+        longitude: this.toNumber(deliveryAddress.longitude),
+        deliveryZone: {
+          id: deliveryAddress.deliveryZone.id,
+          name: deliveryAddress.deliveryZone.name,
+        },
+      },
     };
   }
 
   private async calculateDeliveryFee(
     items: PreparedOrderItem[],
-    deliveryZoneId?: string,
+    deliveryZoneId: string,
     db: DatabaseClient = this.prisma,
   ): Promise<number> {
-    if (!deliveryZoneId) {
-      return 0;
-    }
-
     const marketIds = [
       ...new Set(items.map((item) => item.marketId).filter(Boolean)),
     ] as string[];
@@ -406,17 +503,40 @@ export class OrdersService {
     });
 
     if (deliveryCosts.length !== marketIds.length) {
-      throw new BadRequestException(
-        'Delivery is not available from every selected market to this zone',
-      );
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'MARKET_DELIVERY_COST_MISSING',
+        message:
+          'Delivery is not available from every selected market to the selected address zone.',
+        deliveryZoneId,
+        missingMarketIds: marketIds.filter(
+          (marketId) =>
+            !deliveryCosts.some(
+              (deliveryCost) => deliveryCost.marketId === marketId,
+            ),
+        ),
+      });
     }
 
-    return this.roundMoney(
+    const deliveryFee = this.roundMoney(
       deliveryCosts.reduce(
         (sum, deliveryCost) => sum + this.toNumber(deliveryCost.cost),
         0,
       ),
     );
+
+    if (deliveryFee <= 0) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'INVALID_DELIVERY_COST_CONFIGURATION',
+        message:
+          'A positive delivery cost has not been configured for this order route.',
+        deliveryZoneId,
+        marketIds,
+      });
+    }
+
+    return deliveryFee;
   }
 
   private async calculateServiceFee(
@@ -700,6 +820,8 @@ export class OrdersService {
         },
       },
       payments: true,
+      address: true,
+      deliveryZone: true,
       serviceFeeRule: true,
       promotion: true,
       coupon: true,

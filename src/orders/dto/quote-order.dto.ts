@@ -10,6 +10,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { AddressDetailsDto } from '../../addresses/dto/address-details.dto';
 
 export class QuoteOrderItemDto {
   @IsUUID()
@@ -29,14 +30,15 @@ export class QuoteOrderDto {
   items: QuoteOrderItemDto[];
 
   @IsOptional()
-  @IsUUID()
-  deliveryZoneId?: string;
-
-  @IsOptional()
   @IsString()
   couponCode?: string;
 
   @IsOptional()
   @IsEmail()
   customerEmail?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AddressDetailsDto)
+  deliveryAddress?: AddressDetailsDto;
 }

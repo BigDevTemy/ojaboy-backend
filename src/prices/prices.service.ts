@@ -1,10 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   BuyPriceStrategy,
   MarketPrice,
   PriceQualityGrade,
   Prisma,
 } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkCalculateBuyPricesDto } from './dto/bulk-calculate-buy-prices.dto';
 import { CalculateBuyPriceDto } from './dto/calculate-buy-price.dto';
@@ -132,47 +137,48 @@ export class PricesService {
       targets,
     );
 
-    const prices = await this.prisma.$transaction(async (tx) => {
-      const createdPrices: Awaited<
-        ReturnType<typeof tx.buyPrice.create>
-      >[] = [];
+    const isActive = bulkCalculateBuyPricesDto.isActive ?? true;
+    const validFrom = bulkCalculateBuyPricesDto.validFrom
+      ? new Date(bulkCalculateBuyPricesDto.validFrom)
+      : undefined;
+    const validUntil = bulkCalculateBuyPricesDto.validUntil
+      ? new Date(bulkCalculateBuyPricesDto.validUntil)
+      : undefined;
+    const priceData = results.map((result) => ({
+      id: randomUUID(),
+      productId: result.productId,
+      marketId: result.marketId,
+      marketPriceId: result.marketPriceId,
+      baseMarketPrice: result.baseMarketPrice,
+      marginAmount: result.marginAmount,
+      logisticsBuffer: result.logisticsBuffer,
+      riskBuffer: result.riskBuffer,
+      finalPrice: result.finalPrice,
+      currency: result.currency,
+      unit: result.unit,
+      strategyUsed: result.strategyUsed,
+      isActive,
+      validFrom,
+      validUntil,
+    }));
 
-      for (const result of results) {
-        if (bulkCalculateBuyPricesDto.isActive ?? true) {
-          await tx.buyPrice.updateMany({
-            where: { productId: result.productId, isActive: true },
-            data: { isActive: false },
-          });
-        }
-
-        const price = await tx.buyPrice.create({
-          data: {
-            productId: result.productId,
-            marketId: result.marketId,
-            marketPriceId: result.marketPriceId,
-            baseMarketPrice: result.baseMarketPrice,
-            marginAmount: result.marginAmount,
-            logisticsBuffer: result.logisticsBuffer,
-            riskBuffer: result.riskBuffer,
-            finalPrice: result.finalPrice,
-            currency: result.currency,
-            unit: result.unit,
-            strategyUsed: result.strategyUsed,
-            isActive: bulkCalculateBuyPricesDto.isActive,
-            validFrom: bulkCalculateBuyPricesDto.validFrom
-              ? new Date(bulkCalculateBuyPricesDto.validFrom)
-              : undefined,
-            validUntil: bulkCalculateBuyPricesDto.validUntil
-              ? new Date(bulkCalculateBuyPricesDto.validUntil)
-              : undefined,
+    await this.prisma.$transaction(async (tx) => {
+      if (isActive) {
+        await tx.buyPrice.updateMany({
+          where: {
+            productId: { in: results.map((result) => result.productId) },
+            isActive: true,
           },
-          include: { product: true, market: true, marketPrice: true },
+          data: { isActive: false },
         });
-
-        createdPrices.push(price);
       }
 
-      return createdPrices;
+      await tx.buyPrice.createMany({ data: priceData });
+    });
+    const prices = await this.prisma.buyPrice.findMany({
+      where: { id: { in: priceData.map((price) => price.id) } },
+      include: { product: true, market: true, marketPrice: true },
+      orderBy: { createdAt: 'desc' },
     });
 
     return {
@@ -326,7 +332,9 @@ export class PricesService {
     }
   }
 
-  private toPriceData(dto: CreatePriceDto): Prisma.BuyPriceUncheckedCreateInput {
+  private toPriceData(
+    dto: CreatePriceDto,
+  ): Prisma.BuyPriceUncheckedCreateInput {
     const finalPrice =
       dto.finalPrice ??
       dto.baseMarketPrice +
@@ -352,7 +360,9 @@ export class PricesService {
     };
   }
 
-  private toUpdateData(dto: UpdatePriceDto): Prisma.BuyPriceUncheckedUpdateInput {
+  private toUpdateData(
+    dto: UpdatePriceDto,
+  ): Prisma.BuyPriceUncheckedUpdateInput {
     return {
       marketId: dto.marketId,
       marketPriceId: dto.marketPriceId,
@@ -456,8 +466,12 @@ export class PricesService {
         observedAt:
           dto.observedFrom || dto.observedTo
             ? {
-                gte: dto.observedFrom ? this.toStartDate(dto.observedFrom) : undefined,
-                lte: dto.observedTo ? this.toEndDate(dto.observedTo) : undefined,
+                gte: dto.observedFrom
+                  ? this.toStartDate(dto.observedFrom)
+                  : undefined,
+                lte: dto.observedTo
+                  ? this.toEndDate(dto.observedTo)
+                  : undefined,
               }
             : undefined,
       },
@@ -467,7 +481,9 @@ export class PricesService {
     });
 
     if (marketPrices.length === 0) {
-      throw new NotFoundException('No products found for bulk buy price calculation');
+      throw new NotFoundException(
+        'No products found for bulk buy price calculation',
+      );
     }
 
     return marketPrices;
@@ -477,33 +493,29 @@ export class PricesService {
     dto: BulkCalculateBuyPricesDto,
     targets: Array<Pick<MarketPrice, 'productId' | 'unit'>>,
   ) {
-    const results: StrategyResult[] = [];
-
-    for (const target of targets) {
-      const result = await this.calculateStrategy({
-        productId: target.productId,
-        unit: target.unit,
-        strategy: dto.strategy,
-        preferredMarketId: dto.preferredMarketId,
-        marketId: dto.marketId,
-        deliveryZoneId: dto.deliveryZoneId,
-        marketPriorityIds: dto.marketPriorityIds,
-        marketLogisticsCosts: dto.marketLogisticsCosts,
-        observedFrom: dto.observedFrom,
-        observedTo: dto.observedTo,
-        marginAmount: dto.marginAmount,
-        logisticsBuffer: dto.logisticsBuffer,
-        riskBuffer: dto.riskBuffer,
-        currency: dto.currency,
-        isActive: dto.isActive,
-        validFrom: dto.validFrom,
-        validUntil: dto.validUntil,
-      });
-
-      results.push(result);
-    }
-
-    return results;
+    return Promise.all(
+      targets.map((target) =>
+        this.calculateStrategy({
+          productId: target.productId,
+          unit: target.unit,
+          strategy: dto.strategy,
+          preferredMarketId: dto.preferredMarketId,
+          marketId: dto.marketId,
+          deliveryZoneId: dto.deliveryZoneId,
+          marketPriorityIds: dto.marketPriorityIds,
+          marketLogisticsCosts: dto.marketLogisticsCosts,
+          observedFrom: dto.observedFrom,
+          observedTo: dto.observedTo,
+          marginAmount: dto.marginAmount,
+          logisticsBuffer: dto.logisticsBuffer,
+          riskBuffer: dto.riskBuffer,
+          currency: dto.currency,
+          isActive: dto.isActive,
+          validFrom: dto.validFrom,
+          validUntil: dto.validUntil,
+        }),
+      ),
+    );
   }
 
   private async findMarketPricesForStrategy(
@@ -516,8 +528,12 @@ export class PricesService {
         observedAt:
           dto.observedFrom || dto.observedTo
             ? {
-                gte: dto.observedFrom ? this.toStartDate(dto.observedFrom) : undefined,
-                lte: dto.observedTo ? this.toEndDate(dto.observedTo) : undefined,
+                gte: dto.observedFrom
+                  ? this.toStartDate(dto.observedFrom)
+                  : undefined,
+                lte: dto.observedTo
+                  ? this.toEndDate(dto.observedTo)
+                  : undefined,
               }
             : undefined,
       },
@@ -527,13 +543,17 @@ export class PricesService {
   }
 
   private calculateManualOverride(dto: CalculateBuyPriceDto): StrategyResult {
-    if (dto.manualFinalPrice === undefined && dto.manualBaseMarketPrice === undefined) {
+    if (
+      dto.manualFinalPrice === undefined &&
+      dto.manualBaseMarketPrice === undefined
+    ) {
       throw new BadRequestException(
         'manualFinalPrice or manualBaseMarketPrice is required for manual override',
       );
     }
 
-    const baseMarketPrice = dto.manualBaseMarketPrice ?? dto.manualFinalPrice ?? 0;
+    const baseMarketPrice =
+      dto.manualBaseMarketPrice ?? dto.manualFinalPrice ?? 0;
 
     return this.buildResult({
       dto,
@@ -585,7 +605,8 @@ export class PricesService {
     finalPrice?: number;
   }): StrategyResult {
     const marginAmount = input.dto.marginAmount ?? 0;
-    const logisticsBuffer = input.logisticsBuffer ?? input.dto.logisticsBuffer ?? 0;
+    const logisticsBuffer =
+      input.logisticsBuffer ?? input.dto.logisticsBuffer ?? 0;
     const riskBuffer = input.dto.riskBuffer ?? 0;
     const finalPrice =
       input.finalPrice ??
@@ -638,7 +659,9 @@ export class PricesService {
       return sortedAmounts[middle];
     }
 
-    return this.roundMoney((sortedAmounts[middle - 1] + sortedAmounts[middle]) / 2);
+    return this.roundMoney(
+      (sortedAmounts[middle - 1] + sortedAmounts[middle]) / 2,
+    );
   }
 
   private findPreferredMarketPrice(
@@ -659,7 +682,9 @@ export class PricesService {
     marketPrices: MarketPriceWithRelations[],
   ): MarketPriceWithRelations {
     if (!dto.marketId) {
-      throw new BadRequestException('marketId is required for single_market strategy');
+      throw new BadRequestException(
+        'marketId is required for single_market strategy',
+      );
     }
 
     return this.findLatestByMarket(marketPrices, dto.marketId);
@@ -695,7 +720,9 @@ export class PricesService {
     }
 
     for (const marketId of dto.marketPriorityIds) {
-      const marketPrice = marketPrices.find((price) => price.marketId === marketId);
+      const marketPrice = marketPrices.find(
+        (price) => price.marketId === marketId,
+      );
 
       if (marketPrice) {
         return marketPrice;
@@ -717,7 +744,9 @@ export class PricesService {
       logisticsCostByMarket,
     );
     const logisticsBuffer =
-      dto.logisticsBuffer ?? logisticsCostByMarket.get(selectedMarketPrice.marketId) ?? 0;
+      dto.logisticsBuffer ??
+      logisticsCostByMarket.get(selectedMarketPrice.marketId) ??
+      0;
     const landedCost =
       this.toNumber(selectedMarketPrice.amount) +
       (logisticsCostByMarket.get(selectedMarketPrice.marketId) ?? 0);
@@ -738,10 +767,10 @@ export class PricesService {
     marketPrices: MarketPriceWithRelations[],
     logisticsCostByMarket: Map<string, number>,
   ): MarketPriceWithRelations {
-
     return [...marketPrices].sort((first, second) => {
       const firstTotal =
-        this.toNumber(first.amount) + (logisticsCostByMarket.get(first.marketId) ?? 0);
+        this.toNumber(first.amount) +
+        (logisticsCostByMarket.get(first.marketId) ?? 0);
       const secondTotal =
         this.toNumber(second.amount) +
         (logisticsCostByMarket.get(second.marketId) ?? 0);
@@ -782,10 +811,14 @@ export class PricesService {
     marketPrices: MarketPriceWithRelations[],
     marketId: string,
   ): MarketPriceWithRelations {
-    const marketPrice = marketPrices.find((price) => price.marketId === marketId);
+    const marketPrice = marketPrices.find(
+      (price) => price.marketId === marketId,
+    );
 
     if (!marketPrice) {
-      throw new NotFoundException('No matching market price found for this market');
+      throw new NotFoundException(
+        'No matching market price found for this market',
+      );
     }
 
     return marketPrice;

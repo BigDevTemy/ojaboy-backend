@@ -122,6 +122,7 @@ model DeliveryZone {
   deliveryCosts MarketDeliveryCost[]
   areas         DeliveryArea[]
   userAddresses UserAddress[]
+  orders        Order[]
 
   @@map("delivery_zones")
 }
@@ -184,6 +185,7 @@ model UserAddress {
   updatedAt            DateTime          @updatedAt @map("updated_at")
   user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   deliveryZone         DeliveryZone?     @relation(fields: [deliveryZoneId], references: [id], onDelete: SetNull)
+  orders               Order[]
 
   @@index([userId])
   @@index([deliveryZoneId])
@@ -482,6 +484,8 @@ model CouponRedemption {
 model Order {
   id                   String            @id @default(uuid())
   userId               String            @map("user_id")
+  deliveryAddressId    String?           @map("delivery_address_id")
+  deliveryZoneId       String?           @map("delivery_zone_id")
   serviceFeeRuleId     String?           @map("service_fee_rule_id")
   promotionId          String?           @map("promotion_id")
   couponId             String?           @map("coupon_id")
@@ -497,10 +501,18 @@ model Order {
   total                Decimal           @default(0) @db.Decimal(12, 2)
   couponCode           String?           @map("coupon_code")
   promotionName        String?           @map("promotion_name")
+  deliveryRecipientName String?          @map("delivery_recipient_name")
+  deliveryPhoneNumber  String?           @map("delivery_phone_number")
+  deliveryAddress      String?           @map("delivery_address")
+  deliveryGooglePlaceId String?          @map("delivery_google_place_id")
+  deliveryLatitude     Decimal?          @map("delivery_latitude") @db.Decimal(10, 7)
+  deliveryLongitude    Decimal?          @map("delivery_longitude") @db.Decimal(10, 7)
   note                 String?
   createdAt            DateTime          @default(now()) @map("created_at")
   updatedAt            DateTime          @updatedAt @map("updated_at")
   user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  address              UserAddress?      @relation(fields: [deliveryAddressId], references: [id], onDelete: SetNull)
+  deliveryZone         DeliveryZone?     @relation(fields: [deliveryZoneId], references: [id], onDelete: SetNull)
   serviceFeeRule       ServiceFeeRule?   @relation(fields: [serviceFeeRuleId], references: [id], onDelete: SetNull)
   promotion            Promotion?        @relation(fields: [promotionId], references: [id], onDelete: SetNull)
   coupon               Coupon?           @relation(fields: [couponId], references: [id], onDelete: SetNull)
@@ -509,6 +521,8 @@ model Order {
   payments             Payment[]
 
   @@index([userId])
+  @@index([deliveryAddressId])
+  @@index([deliveryZoneId])
   @@index([status])
   @@index([serviceFeeRuleId])
   @@index([promotionId])
