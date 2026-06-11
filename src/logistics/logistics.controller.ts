@@ -9,9 +9,11 @@ import {
   Query,
 } from '@nestjs/common';
 import { CreateDeliveryZoneDto } from './dto/create-delivery-zone.dto';
+import { CreateDeliveryAreaDto } from './dto/create-delivery-area.dto';
 import { CreateMarketDeliveryCostDto } from './dto/create-market-delivery-cost.dto';
 import { CreateMarketRouteCostDto } from './dto/create-market-route-cost.dto';
 import { UpdateDeliveryZoneDto } from './dto/update-delivery-zone.dto';
+import { UpdateDeliveryAreaDto } from './dto/update-delivery-area.dto';
 import { UpdateMarketDeliveryCostDto } from './dto/update-market-delivery-cost.dto';
 import { UpdateMarketRouteCostDto } from './dto/update-market-route-cost.dto';
 import { LogisticsService } from './logistics.service';
@@ -25,6 +27,29 @@ export class LogisticsController {
     return this.logisticsService.createDeliveryZone(dto);
   }
 
+  @Post('delivery-areas')
+  createDeliveryArea(@Body() dto: CreateDeliveryAreaDto) {
+    return this.logisticsService.createDeliveryArea(dto);
+  }
+
+  @Get('delivery-areas')
+  findDeliveryAreas(@Query('deliveryZoneId') deliveryZoneId?: string) {
+    return this.logisticsService.findDeliveryAreas(deliveryZoneId);
+  }
+
+  @Patch('delivery-areas/:id')
+  updateDeliveryArea(
+    @Param('id') id: string,
+    @Body() dto: UpdateDeliveryAreaDto,
+  ) {
+    return this.logisticsService.updateDeliveryArea(id, dto);
+  }
+
+  @Delete('delivery-areas/:id')
+  removeDeliveryArea(@Param('id') id: string) {
+    return this.logisticsService.removeDeliveryArea(id);
+  }
+
   @Get('delivery-zones')
   findDeliveryZones() {
     return this.logisticsService.findDeliveryZones();
@@ -36,7 +61,10 @@ export class LogisticsController {
   }
 
   @Patch('delivery-zones/:id')
-  updateDeliveryZone(@Param('id') id: string, @Body() dto: UpdateDeliveryZoneDto) {
+  updateDeliveryZone(
+    @Param('id') id: string,
+    @Body() dto: UpdateDeliveryZoneDto,
+  ) {
     return this.logisticsService.updateDeliveryZone(id, dto);
   }
 

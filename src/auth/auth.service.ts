@@ -250,15 +250,16 @@ export class AuthService {
     const email = dto.email.toLowerCase().trim();
     try {
       const challenge = await this.prisma.orderOtpChallenge.findFirst({
-        where: { email, consumedAt: null },
+        where: {
+          email,
+          consumedAt: null,
+          expiresAt: { gt: new Date() },
+          attempts: { lt: ORDER_OTP_MAX_ATTEMPTS },
+        },
         orderBy: { createdAt: 'desc' },
       });
 
-      if (
-        !challenge ||
-        challenge.expiresAt.getTime() < Date.now() ||
-        challenge.attempts >= ORDER_OTP_MAX_ATTEMPTS
-      ) {
+      if (!challenge) {
         throw new UnauthorizedException('OTP is invalid or expired');
       }
 

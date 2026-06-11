@@ -20,6 +20,9 @@ model User {
   authProviderLinks   UserAuthProvider[]
   payments            Payment[]
   orders              Order[]
+  addresses           UserAddress[]
+  couponEligibilities CouponCustomer[]
+  couponRedemptions   CouponRedemption[]
 
   @@map("users")
 }
@@ -50,17 +53,17 @@ model PasswordSetupToken {
 }
 
 model OrderOtpChallenge {
-  id                 String    @id @default(uuid())
-  email              String
-  fullName           String?   @map("full_name")
-  codeHash           String    @map("code_hash")
-  expiresAt          DateTime  @map("expires_at")
-  attempts           Int       @default(0)
-  verifiedAt         DateTime? @map("verified_at")
-  orderTokenHash     String?   @unique @map("order_token_hash")
+  id                  String    @id @default(uuid())
+  email               String
+  fullName            String?   @map("full_name")
+  codeHash            String    @map("code_hash")
+  expiresAt           DateTime  @map("expires_at")
+  attempts            Int       @default(0)
+  verifiedAt          DateTime? @map("verified_at")
+  orderTokenHash      String?   @unique @map("order_token_hash")
   orderTokenExpiresAt DateTime? @map("order_token_expires_at")
-  consumedAt         DateTime? @map("consumed_at")
-  createdAt          DateTime  @default(now()) @map("created_at")
+  consumedAt          DateTime? @map("consumed_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
 
   @@index([email, createdAt])
   @@index([expiresAt])
@@ -96,15 +99,15 @@ enum MarketStatus {
 }
 
 model Market {
-  id            String       @id @default(uuid())
+  id            String               @id @default(uuid())
   marketname    String
   marketaddress String?
-  status        MarketStatus @default(active)
+  status        MarketStatus         @default(active)
   marketPrices  MarketPrice[]
   buyPrices     BuyPrice[]
   deliveryCosts MarketDeliveryCost[]
-  routesFrom    MarketRouteCost[] @relation("MarketRouteFrom")
-  routesTo      MarketRouteCost[] @relation("MarketRouteTo")
+  routesFrom    MarketRouteCost[]    @relation("MarketRouteFrom")
+  routesTo      MarketRouteCost[]    @relation("MarketRouteTo")
 
   @@map("markets")
 }
@@ -117,8 +120,76 @@ model DeliveryZone {
   createdAt     DateTime             @default(now()) @map("created_at")
   updatedAt     DateTime             @updatedAt @map("updated_at")
   deliveryCosts MarketDeliveryCost[]
+  areas         DeliveryArea[]
+  userAddresses UserAddress[]
 
   @@map("delivery_zones")
+}
+
+model DeliveryArea {
+  id             String       @id @default(uuid())
+  deliveryZoneId String       @map("delivery_zone_id")
+  name           String
+  normalizedName String       @map("normalized_name")
+  aliases        String[]     @default([])
+  locality       String?
+  state          String
+  country        String       @default("Nigeria")
+  isActive       Boolean      @default(true) @map("is_active")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  deliveryZone   DeliveryZone @relation(fields: [deliveryZoneId], references: [id], onDelete: Cascade)
+
+  @@unique([normalizedName, state, country])
+  @@index([deliveryZoneId])
+  @@index([isActive])
+  @@map("delivery_areas")
+}
+
+enum AddressZoneStatus {
+  supported
+  unsupported
+  zone_inactive
+}
+
+model UserAddress {
+  id                   String            @id @default(uuid())
+  userId               String            @map("user_id")
+  deliveryZoneId       String?           @map("delivery_zone_id")
+  label                String?
+  recipientName        String            @map("recipient_name")
+  phoneNumber          String            @map("phone_number")
+  formattedAddress     String            @map("formatted_address")
+  addressLine1         String            @map("address_line_1")
+  addressLine2         String?           @map("address_line_2")
+  streetNumber         String?           @map("street_number")
+  route                String?
+  neighborhood         String?
+  sublocality          String?
+  locality             String?
+  localGovernmentArea  String?           @map("local_government_area")
+  administrativeArea   String?           @map("administrative_area")
+  state                String?
+  country              String
+  countryCode          String?           @map("country_code")
+  postalCode           String?           @map("postal_code")
+  googlePlaceId        String            @map("google_place_id")
+  latitude             Decimal           @db.Decimal(10, 7)
+  longitude            Decimal           @db.Decimal(10, 7)
+  googleAddressData    Json?             @map("google_address_data")
+  zoneStatus           AddressZoneStatus @default(unsupported) @map("zone_status")
+  zoneResolutionDetail String?           @map("zone_resolution_detail")
+  isDefault            Boolean           @default(false) @map("is_default")
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
+  user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveryZone         DeliveryZone?     @relation(fields: [deliveryZoneId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([deliveryZoneId])
+  @@index([zoneStatus])
+  @@index([googlePlaceId])
+  @@map("user_addresses")
 }
 
 model MarketDeliveryCost {
@@ -227,15 +298,15 @@ enum BuyPriceStrategy {
 }
 
 model Product {
-  id           String         @id @default(uuid())
+  id           String           @id @default(uuid())
   name         String
   description  String?
-  sku          String         @unique
+  sku          String           @unique
   category     ProductCategory?
-  imageUrl     String?        @map("image_url")
-  status       ProductStatus  @default(active)
-  createdAt    DateTime       @default(now()) @map("created_at")
-  updatedAt    DateTime       @updatedAt @map("updated_at")
+  imageUrl     String?          @map("image_url")
+  status       ProductStatus    @default(active)
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
   marketPrices MarketPrice[]
   buyPrices    BuyPrice[]
   orderItems   OrderItem[]
@@ -270,27 +341,27 @@ model MarketPrice {
 }
 
 model BuyPrice {
-  id                String       @id @default(uuid())
-  productId         String       @map("product_id")
-  marketId          String?      @map("market_id")
-  marketPriceId     String?      @map("market_price_id")
-  baseMarketPrice   Decimal      @db.Decimal(12, 2) @map("base_market_price")
-  marginAmount      Decimal      @default(0) @db.Decimal(12, 2) @map("margin_amount")
-  logisticsBuffer   Decimal      @default(0) @db.Decimal(12, 2) @map("logistics_buffer")
-  riskBuffer        Decimal      @default(0) @db.Decimal(12, 2) @map("risk_buffer")
-  finalPrice        Decimal      @db.Decimal(12, 2) @map("final_price")
-  currency          String       @default("NGN")
-  unit              PriceUnit
-  strategyUsed      BuyPriceStrategy @default(cheapest) @map("strategy_used")
-  isActive          Boolean      @default(true) @map("is_active")
-  validFrom         DateTime     @default(now()) @map("valid_from")
-  validUntil        DateTime?    @map("valid_until")
-  createdAt         DateTime     @default(now()) @map("created_at")
-  updatedAt         DateTime     @updatedAt @map("updated_at")
-  market            Market?      @relation(fields: [marketId], references: [id], onDelete: SetNull)
-  marketPrice       MarketPrice? @relation(fields: [marketPriceId], references: [id], onDelete: SetNull)
-  product           Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
-  orderItems        OrderItem[]
+  id              String           @id @default(uuid())
+  productId       String           @map("product_id")
+  marketId        String?          @map("market_id")
+  marketPriceId   String?          @map("market_price_id")
+  baseMarketPrice Decimal          @map("base_market_price") @db.Decimal(12, 2)
+  marginAmount    Decimal          @default(0) @map("margin_amount") @db.Decimal(12, 2)
+  logisticsBuffer Decimal          @default(0) @map("logistics_buffer") @db.Decimal(12, 2)
+  riskBuffer      Decimal          @default(0) @map("risk_buffer") @db.Decimal(12, 2)
+  finalPrice      Decimal          @map("final_price") @db.Decimal(12, 2)
+  currency        String           @default("NGN")
+  unit            PriceUnit
+  strategyUsed    BuyPriceStrategy @default(cheapest) @map("strategy_used")
+  isActive        Boolean          @default(true) @map("is_active")
+  validFrom       DateTime         @default(now()) @map("valid_from")
+  validUntil      DateTime?        @map("valid_until")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  market          Market?          @relation(fields: [marketId], references: [id], onDelete: SetNull)
+  marketPrice     MarketPrice?     @relation(fields: [marketPriceId], references: [id], onDelete: SetNull)
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems      OrderItem[]
 
   @@index([productId])
   @@index([marketId])
@@ -309,23 +380,139 @@ enum OrderStatus {
   cancelled
 }
 
+enum CouponDiscountType {
+  percentage
+  fixed
+}
+
+model ServiceFeeRule {
+  id         String    @id @default(uuid())
+  name       String
+  percentage Decimal   @default(0) @db.Decimal(5, 2)
+  baseFee    Decimal   @default(0) @map("base_fee") @db.Decimal(12, 2)
+  minimumFee Decimal?  @map("minimum_fee") @db.Decimal(12, 2)
+  maximumFee Decimal?  @map("maximum_fee") @db.Decimal(12, 2)
+  currency   String    @default("NGN")
+  isActive   Boolean   @default(true) @map("is_active")
+  validFrom  DateTime  @default(now()) @map("valid_from")
+  validUntil DateTime? @map("valid_until")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  orders     Order[]
+
+  @@index([isActive, validFrom, validUntil])
+  @@map("service_fee_rules")
+}
+
+model Promotion {
+  id               String             @id @default(uuid())
+  name             String
+  description      String?
+  discountType     CouponDiscountType @map("discount_type")
+  discountValue    Decimal            @map("discount_value") @db.Decimal(12, 2)
+  maximumDiscount  Decimal?           @map("maximum_discount") @db.Decimal(12, 2)
+  minimumSubtotal  Decimal            @default(0) @map("minimum_subtotal") @db.Decimal(12, 2)
+  priority         Int                @default(0)
+  stackWithCoupons Boolean            @default(false) @map("stack_with_coupons")
+  isActive         Boolean            @default(true) @map("is_active")
+  validFrom        DateTime           @map("valid_from")
+  validUntil       DateTime           @map("valid_until")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  orders           Order[]
+
+  @@index([isActive, validFrom, validUntil])
+  @@index([priority])
+  @@map("promotions")
+}
+
+model Coupon {
+  id                String             @id @default(uuid())
+  code              String             @unique
+  description       String?
+  discountType      CouponDiscountType @map("discount_type")
+  discountValue     Decimal            @map("discount_value") @db.Decimal(12, 2)
+  maximumDiscount   Decimal?           @map("maximum_discount") @db.Decimal(12, 2)
+  minimumSubtotal   Decimal            @default(0) @map("minimum_subtotal") @db.Decimal(12, 2)
+  usageLimit        Int?               @map("usage_limit")
+  perCustomerLimit  Int                @default(1) @map("per_customer_limit")
+  isActive          Boolean            @default(true) @map("is_active")
+  validFrom         DateTime           @default(now()) @map("valid_from")
+  validUntil        DateTime?          @map("valid_until")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+  eligibleCustomers CouponCustomer[]
+  redemptions       CouponRedemption[]
+  orders            Order[]
+
+  @@index([isActive, validFrom, validUntil])
+  @@map("coupons")
+}
+
+model CouponCustomer {
+  id        String   @id @default(uuid())
+  couponId  String   @map("coupon_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  coupon    Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, userId])
+  @@index([userId])
+  @@map("coupon_customers")
+}
+
+model CouponRedemption {
+  id             String   @id @default(uuid())
+  couponId       String   @map("coupon_id")
+  userId         String   @map("user_id")
+  orderId        String   @unique @map("order_id")
+  discountAmount Decimal  @map("discount_amount") @db.Decimal(12, 2)
+  redeemedAt     DateTime @default(now()) @map("redeemed_at")
+  coupon         Coupon   @relation(fields: [couponId], references: [id], onDelete: Restrict)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, userId, orderId])
+  @@index([couponId])
+  @@index([userId])
+  @@map("coupon_redemptions")
+}
+
 model Order {
-  id        String      @id @default(uuid())
-  userId    String      @map("user_id")
-  status    OrderStatus @default(pending)
-  subtotal  Decimal     @default(0) @db.Decimal(12, 2)
-  serviceFee Decimal    @default(0) @db.Decimal(12, 2) @map("service_fee")
-  deliveryFee Decimal   @default(0) @db.Decimal(12, 2) @map("delivery_fee")
-  total     Decimal     @default(0) @db.Decimal(12, 2)
-  note      String?
-  createdAt DateTime    @default(now()) @map("created_at")
-  updatedAt DateTime    @updatedAt @map("updated_at")
-  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  items     OrderItem[]
-  payments  Payment[]
+  id                   String            @id @default(uuid())
+  userId               String            @map("user_id")
+  serviceFeeRuleId     String?           @map("service_fee_rule_id")
+  promotionId          String?           @map("promotion_id")
+  couponId             String?           @map("coupon_id")
+  status               OrderStatus       @default(pending)
+  subtotal             Decimal           @default(0) @db.Decimal(12, 2)
+  discountAmount       Decimal           @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  promotionDiscount    Decimal           @default(0) @map("promotion_discount") @db.Decimal(12, 2)
+  couponDiscount       Decimal           @default(0) @map("coupon_discount") @db.Decimal(12, 2)
+  serviceFee           Decimal           @default(0) @map("service_fee") @db.Decimal(12, 2)
+  serviceFeePercentage Decimal           @default(0) @map("service_fee_percentage") @db.Decimal(5, 2)
+  serviceFeeBase       Decimal           @default(0) @map("service_fee_base") @db.Decimal(12, 2)
+  deliveryFee          Decimal           @default(0) @map("delivery_fee") @db.Decimal(12, 2)
+  total                Decimal           @default(0) @db.Decimal(12, 2)
+  couponCode           String?           @map("coupon_code")
+  promotionName        String?           @map("promotion_name")
+  note                 String?
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
+  user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serviceFeeRule       ServiceFeeRule?   @relation(fields: [serviceFeeRuleId], references: [id], onDelete: SetNull)
+  promotion            Promotion?        @relation(fields: [promotionId], references: [id], onDelete: SetNull)
+  coupon               Coupon?           @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  couponRedemption     CouponRedemption?
+  items                OrderItem[]
+  payments             Payment[]
 
   @@index([userId])
   @@index([status])
+  @@index([serviceFeeRuleId])
+  @@index([promotionId])
+  @@index([couponId])
   @@map("orders")
 }
 
@@ -336,8 +523,8 @@ model OrderItem {
   buyPriceId String?   @map("buy_price_id")
   quantity   Decimal   @db.Decimal(12, 2)
   unit       PriceUnit
-  unitPrice  Decimal   @db.Decimal(12, 2) @map("unit_price")
-  totalPrice Decimal   @db.Decimal(12, 2) @map("total_price")
+  unitPrice  Decimal   @map("unit_price") @db.Decimal(12, 2)
+  totalPrice Decimal   @map("total_price") @db.Decimal(12, 2)
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
   buyPrice   BuyPrice? @relation(fields: [buyPriceId], references: [id], onDelete: SetNull)

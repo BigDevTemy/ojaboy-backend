@@ -2,6 +2,7 @@ import {
   EmailTemplate,
   EmailTemplateName,
   EmailTemplateVariables,
+  OrderEmailItem,
   RenderedEmailTemplate,
 } from './email-template.types';
 
@@ -16,7 +17,17 @@ function getValue(
     return value.toISOString();
   }
 
+  if (Array.isArray(value)) {
+    return fallback;
+  }
+
   return value === undefined ? fallback : String(value);
+}
+
+function getOrderItems(variables: EmailTemplateVariables): OrderEmailItem[] {
+  const items = variables.orderItems;
+
+  return Array.isArray(items) ? items : [];
 }
 
 function escapeHtml(value: string): string {
@@ -76,6 +87,13 @@ const templates: Record<EmailTemplateName, EmailTemplate> = {
       const fullName = escapeHtml(getValue(variables, 'fullName', 'there'));
       const orderNumber = escapeHtml(getValue(variables, 'orderNumber'));
       const orderStatus = escapeHtml(getValue(variables, 'orderStatus'));
+      const subtotal = escapeHtml(getValue(variables, 'subtotal'));
+      const discountAmount = escapeHtml(getValue(variables, 'discountAmount'));
+      const serviceFee = escapeHtml(getValue(variables, 'serviceFee'));
+      const deliveryFee = escapeHtml(getValue(variables, 'deliveryFee'));
+      const total = escapeHtml(getValue(variables, 'total'));
+      const note = escapeHtml(getValue(variables, 'note'));
+      const orderItems = getOrderItems(variables);
       const orderMessage = escapeHtml(
         getValue(
           variables,
@@ -83,6 +101,18 @@ const templates: Record<EmailTemplateName, EmailTemplate> = {
           'Your order status has been updated.',
         ),
       );
+      const itemRows = orderItems
+        .map(
+          (item) => `
+            <tr>
+              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(item.productName)}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(item.quantity)} ${escapeHtml(item.unit)}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: right;">${escapeHtml(item.unitPrice)}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: right;">${escapeHtml(item.totalPrice)}</td>
+            </tr>
+          `,
+        )
+        .join('');
 
       return `
         <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
@@ -91,6 +121,25 @@ const templates: Record<EmailTemplateName, EmailTemplate> = {
           <p>${orderMessage}</p>
           <p><strong>Order number:</strong> ${orderNumber}</p>
           <p><strong>Status:</strong> ${orderStatus}</p>
+          <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+            <thead>
+              <tr style="background: #f3f4f6;">
+                <th style="padding: 10px; text-align: left;">Product</th>
+                <th style="padding: 10px; text-align: left;">Quantity</th>
+                <th style="padding: 10px; text-align: right;">Unit price</th>
+                <th style="padding: 10px; text-align: right;">Total</th>
+              </tr>
+            </thead>
+            <tbody>${itemRows}</tbody>
+          </table>
+          <div style="margin-left: auto; max-width: 320px;">
+            <p><strong>Subtotal:</strong> <span style="float: right;">${subtotal}</span></p>
+            ${discountAmount ? `<p><strong>Discount:</strong> <span style="float: right;">-${discountAmount}</span></p>` : ''}
+            <p><strong>Service fee:</strong> <span style="float: right;">${serviceFee}</span></p>
+            <p><strong>Delivery fee:</strong> <span style="float: right;">${deliveryFee}</span></p>
+            <p style="font-size: 18px;"><strong>Total:</strong> <strong style="float: right;">${total}</strong></p>
+          </div>
+          ${note ? `<p><strong>Order note:</strong> ${note}</p>` : ''}
         </div>
       `;
     },
@@ -98,10 +147,21 @@ const templates: Record<EmailTemplateName, EmailTemplate> = {
       const fullName = getValue(variables, 'fullName', 'there');
       const orderNumber = getValue(variables, 'orderNumber');
       const orderStatus = getValue(variables, 'orderStatus');
+      const subtotal = getValue(variables, 'subtotal');
+      const discountAmount = getValue(variables, 'discountAmount');
+      const serviceFee = getValue(variables, 'serviceFee');
+      const deliveryFee = getValue(variables, 'deliveryFee');
+      const total = getValue(variables, 'total');
+      const note = getValue(variables, 'note');
+      const orderItems = getOrderItems(variables);
       const orderMessage = getValue(
         variables,
         'orderMessage',
         'Your order status has been updated.',
+      );
+      const itemLines = orderItems.map(
+        (item) =>
+          `- ${item.productName}: ${item.quantity} ${item.unit} x ${item.unitPrice} = ${item.totalPrice}`,
       );
 
       return [
@@ -111,6 +171,16 @@ const templates: Record<EmailTemplateName, EmailTemplate> = {
         '',
         `Order number: ${orderNumber}`,
         `Status: ${orderStatus}`,
+        '',
+        'Items:',
+        ...itemLines,
+        '',
+        `Subtotal: ${subtotal}`,
+        ...(discountAmount ? [`Discount: -${discountAmount}`] : []),
+        `Service fee: ${serviceFee}`,
+        `Delivery fee: ${deliveryFee}`,
+        `Total: ${total}`,
+        ...(note ? ['', `Order note: ${note}`] : []),
       ].join('\n');
     },
   },

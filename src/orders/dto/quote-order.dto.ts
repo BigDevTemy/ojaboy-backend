@@ -4,6 +4,8 @@ import {
   IsArray,
   IsNumber,
   IsOptional,
+  IsEmail,
+  IsString,
   IsUUID,
   Min,
   ValidateNested,
@@ -29,4 +31,12 @@ export class QuoteOrderDto {
   @IsOptional()
   @IsUUID()
   deliveryZoneId?: string;
+
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
+
+  @IsOptional()
+  @IsEmail()
+  customerEmail?: string;
 }

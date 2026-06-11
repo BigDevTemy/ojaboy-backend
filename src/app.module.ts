@@ -5,10 +5,12 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
 import { AccessControlModule } from './access-control/access-control.module';
+import { AddressesModule } from './addresses/addresses.module';
 import { AgentChatboxModule } from './agent-chatbox/agent-chatbox.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
+import { CommerceConfigModule } from './commerce-config/commerce-config.module';
 import { LogisticsModule } from './logistics/logistics.module';
 import { MarketPricesModule } from './market-prices/market-prices.module';
 import { MarketsModule } from './markets/markets.module';
@@ -63,6 +65,8 @@ import { UsersModule } from './users/users.module';
     PaymentsModule,
     UsersModule,
     AccessControlModule,
+    AddressesModule,
+    CommerceConfigModule,
   ],
   controllers: [AppController],
   providers: [

@@ -4,7 +4,18 @@ export type EmailTemplateName =
   | 'order-otp'
   | 'welcome-note';
 
-export type EmailTemplateVariables = Record<string, string | number | Date>;
+export interface OrderEmailItem {
+  productName: string;
+  quantity: string;
+  unit: string;
+  unitPrice: string;
+  totalPrice: string;
+}
+
+export type EmailTemplateVariables = Record<
+  string,
+  string | number | Date | OrderEmailItem[]
+>;
 
 export interface RenderedEmailTemplate {
   subject: string;
