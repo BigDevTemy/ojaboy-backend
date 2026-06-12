@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { InternalApiTokenGuard } from '../common/guards/internal-api-token.guard';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { QuoteOrderDto } from './dto/quote-order.dto';
+import { RetryOrderPaymentDto } from './dto/retry-order-payment.dto';
 import { OrdersService } from './orders.service';
 
 @Controller('orders')
@@ -36,5 +37,13 @@ export class OrdersController {
   @Post('quote')
   quote(@Body() quoteOrderDto: QuoteOrderDto) {
     return this.ordersService.quote(quoteOrderDto);
+  }
+
+  @Post(':orderId/payment/retry')
+  retryPayment(
+    @Param('orderId') orderId: string,
+    @Body() dto: RetryOrderPaymentDto,
+  ) {
+    return this.ordersService.retryPayment(orderId, dto.email);
   }
 }

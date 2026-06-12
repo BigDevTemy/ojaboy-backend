@@ -7,13 +7,21 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { CouponDiscountType, PriceUnit, Prisma, User } from '@prisma/client';
+import {
+  CouponDiscountType,
+  PaymentProvider,
+  PaymentStatus,
+  PriceUnit,
+  Prisma,
+  User,
+} from '@prisma/client';
 import { createHash } from 'node:crypto';
 import {
   AddressesService,
   ResolvedDeliveryAddress,
 } from '../addresses/addresses.service';
 import { EmailService } from '../mail/email.service';
+import { PaymentsService } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { QuoteOrderDto } from './dto/quote-order.dto';
@@ -78,6 +86,7 @@ export class OrdersService {
     private readonly emailService: EmailService,
     private readonly prisma: PrismaService,
     private readonly addressesService: AddressesService,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   async findAll() {
@@ -160,7 +169,7 @@ export class OrdersService {
     const email = dto.email.toLowerCase().trim();
     const tokenHash = this.hashToken(dto.orderToken);
 
-    const { order, quote } = await this.prisma.$transaction(
+    const { order, payment, quote } = await this.prisma.$transaction(
       async (tx) => {
         const challenge = await tx.orderOtpChallenge.findUnique({
           where: { orderTokenHash: tokenHash },
@@ -224,7 +233,7 @@ export class OrdersService {
           });
         }
 
-        const order = await tx.order.create({
+        const createdOrder = await tx.order.create({
           data: {
             userId: user.id,
             deliveryAddressId: quote.deliveryAddressId,
@@ -269,16 +278,35 @@ export class OrdersService {
             data: {
               couponId: quote.couponId,
               userId: user.id,
-              orderId: order.id,
+              orderId: createdOrder.id,
               discountAmount: quote.couponDiscount,
             },
           });
         }
 
-        return { order, quote };
+        const payment = await tx.payment.create({
+          data: {
+            userId: user.id,
+            orderId: createdOrder.id,
+            amount: quote.total,
+            currency: quote.currency,
+            provider: PaymentProvider.paystack,
+            providerReference: `order_${createdOrder.id}`,
+            status: PaymentStatus.initializing,
+          },
+        });
+        const order = await tx.order.findUniqueOrThrow({
+          where: { id: createdOrder.id },
+          include: this.orderInclude(),
+        });
+
+        return { order, payment, quote };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+
+    const paymentInitialization =
+      await this.paymentsService.initializePaymentAttempt(payment.id);
 
     try {
       await this.emailService.sendTemplateEmail({
@@ -333,10 +361,20 @@ export class OrdersService {
       );
     }
 
+    const responseOrder = await this.prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: this.orderInclude(),
+    });
+
     return {
       message: 'Order created successfully.',
-      order,
+      order: responseOrder,
+      payment: paymentInitialization,
     };
+  }
+
+  retryPayment(orderId: string, email: string) {
+    return this.paymentsService.retryOrderPayment(orderId, email);
   }
 
   private async calculateQuote(

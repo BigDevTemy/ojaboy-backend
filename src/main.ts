@@ -15,7 +15,10 @@ function getCorsOrigins(): string[] | boolean {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+    rawBody: true,
+  });
 
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
   app.useLogger(app.get(Logger));

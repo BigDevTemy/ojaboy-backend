@@ -3,9 +3,11 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
+  RawBody,
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentStatusDto } from './dto/update-payment-status.dto';
@@ -60,8 +62,12 @@ export class PaymentsController {
   }
 
   @Post('webhook')
-  webhook(@Body() payload: Record<string, unknown>) {
-    return this.paymentsService.webhook(payload);
+  webhook(
+    @Body() payload: Record<string, unknown>,
+    @Headers('x-paystack-signature') signature: string | undefined,
+    @RawBody() rawBody: Buffer | undefined,
+  ) {
+    return this.paymentsService.webhook(payload, signature, rawBody);
   }
 
   @Delete(':id')

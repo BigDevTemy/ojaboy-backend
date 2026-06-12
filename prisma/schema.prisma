@@ -383,6 +383,11 @@ enum OrderStatus {
   cancelled
 }
 
+enum OrderPaymentStatus {
+  pending
+  paid
+}
+
 enum CouponDiscountType {
   percentage
   fixed
@@ -491,6 +496,7 @@ model Order {
   promotionId          String?           @map("promotion_id")
   couponId             String?           @map("coupon_id")
   status               OrderStatus       @default(pending)
+  paymentStatus        OrderPaymentStatus @default(pending) @map("payment_status")
   subtotal             Decimal           @default(0) @db.Decimal(12, 2)
   discountAmount       Decimal           @default(0) @map("discount_amount") @db.Decimal(12, 2)
   promotionDiscount    Decimal           @default(0) @map("promotion_discount") @db.Decimal(12, 2)
@@ -525,6 +531,7 @@ model Order {
   @@index([deliveryAddressId])
   @@index([deliveryZoneId])
   @@index([status])
+  @@index([paymentStatus])
   @@index([serviceFeeRuleId])
   @@index([promotionId])
   @@index([couponId])
@@ -561,6 +568,7 @@ enum PaymentProvider {
 }
 
 enum PaymentStatus {
+  initializing
   pending
   successful
   failed
@@ -587,4 +595,21 @@ model Payment {
   @@index([orderId])
   @@index([status])
   @@map("payments")
+}
+
+model WebhookLog {
+  id         String   @id @default(uuid())
+  provider   String
+  event      String?
+  reference  String?
+  signature  String
+  payload    Json
+  rawBody    String   @map("raw_body")
+  receivedAt DateTime @default(now()) @map("received_at")
+
+  @@index([provider])
+  @@index([event])
+  @@index([reference])
+  @@index([receivedAt])
+  @@map("webhook_logs")
 }
