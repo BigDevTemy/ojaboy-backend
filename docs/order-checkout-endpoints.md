@@ -61,8 +61,38 @@ calculated by the server. Configure the service fee with
 
 ```http
 POST /orders
+Authorization: Bearer <access-token>
 Content-Type: application/json
 ```
+
+```json
+{
+  "items": [
+    {
+      "buyPriceId": "00000000-0000-0000-0000-000000000000",
+      "quantity": 2
+    }
+  ],
+  "deliveryAddress": {
+    "recipientName": "Customer Name",
+    "phoneNumber": "+2348012345678",
+    "formattedAddress": "12 Admiralty Way, Lekki, Lagos",
+    "addressLine1": "12 Admiralty Way",
+    "country": "Nigeria",
+    "googlePlaceId": "google-place-id",
+    "latitude": 6.4474,
+    "longitude": 3.4723
+  },
+  "note": "Please call on arrival."
+}
+```
+
+For authenticated checkout, the server uses the user from the JWT and ignores
+`email` and `orderToken` if they are supplied.
+
+For checkout without a JWT, omit the `Authorization` header and include both
+the verified email and the `orderToken` returned by the OTP verification
+endpoint:
 
 ```json
 {
@@ -74,13 +104,21 @@ Content-Type: application/json
       "quantity": 2
     }
   ],
-  "deliveryZoneId": "00000000-0000-0000-0000-000000000000",
-  "note": "Please call on arrival."
+  "deliveryAddress": {
+    "recipientName": "Customer Name",
+    "phoneNumber": "+2348012345678",
+    "formattedAddress": "12 Admiralty Way, Lekki, Lagos",
+    "addressLine1": "12 Admiralty Way",
+    "country": "Nigeria",
+    "googlePlaceId": "google-place-id",
+    "latitude": 6.4474,
+    "longitude": 3.4723
+  }
 }
 ```
 
-The email must match the verified email. The server recalculates the quote and
-consumes the token transactionally.
+The fallback order token is consumed transactionally. Requests without either
+a valid JWT or a valid order token receive `401 Unauthorized`.
 
 ## Database Setup
 

@@ -40,6 +40,113 @@ function escapeHtml(value: string): string {
 }
 
 const templates: Record<EmailTemplateName, EmailTemplate> = {
+  'email-verification': {
+    subject: () => 'Verify your Ojaboy email address',
+    html: (variables) => {
+      const fullName = escapeHtml(getValue(variables, 'fullName', 'there'));
+      const verificationLink = escapeHtml(
+        getValue(variables, 'verificationLink'),
+      );
+      const expiresIn = escapeHtml(getValue(variables, 'expiresIn', '1 hour'));
+      const headerImageUrl = escapeHtml(
+        getValue(variables, 'headerImageUrl', ''),
+      );
+      const supportEmail = escapeHtml(
+        getValue(variables, 'supportEmail', 'support@ojaboy.com'),
+      );
+
+      return `
+        <!doctype html>
+        <html>
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Verify your Ojaboy email</title>
+          </head>
+          <body style="margin:0; padding:0; background:#f7f7f7; font-family:Arial, Helvetica, sans-serif; color:#111827;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f7f7; padding:40px 12px;">
+              <tr>
+                <td align="center">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#ffffff; border-radius:18px; overflow:hidden; box-shadow:0 10px 35px rgba(0,0,0,0.08);">
+                    <tr>
+                      <td style="padding:0; background:#ffffff;">
+                        <img src="${headerImageUrl}" alt="Ojaboy Market Intelligence" width="640" style="width:100%; max-width:640px; height:auto; display:block; border:0; outline:none; text-decoration:none;" />
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="padding:40px 55px 20px;">
+                        <h2 style="margin:0 0 15px; font-size:30px; line-height:1.25; font-weight:800; color:#111111;">
+                          Verify your email address
+                        </h2>
+                        <p style="margin:0 auto; max-width:500px; font-size:16px; line-height:1.7; color:#555555;">
+                          Hello ${fullName}, welcome to Ojaboy. Confirm your email address to activate your account and securely start using Ojaboy.
+                        </p>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="padding:15px 55px 35px;">
+                        <a href="${verificationLink}" style="display:inline-block; background:#f20505; color:#ffffff; text-decoration:none; padding:17px 56px; border-radius:10px; font-size:18px; line-height:1.2; font-weight:bold;">
+                          Verify Email Address
+                        </a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:0 55px 35px;">
+                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#fff0f0; border-radius:14px;">
+                          <tr>
+                            <td style="padding:22px; color:#555555; font-size:14px; line-height:1.7;">
+                              This verification link expires in <strong>${expiresIn}</strong>. If you did not create an Ojaboy account, you can safely ignore this email.
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:0 55px 35px; color:#777777; font-size:13px; line-height:1.6; word-break:break-all;">
+                        If the button does not work, open this link:<br />
+                        <a href="${verificationLink}" style="color:#e60000;">${verificationLink}</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="padding:28px 55px 35px; border-top:1px solid #eeeeee; color:#555555; font-size:14px; line-height:1.6;">
+                        <strong>Need help?</strong><br />
+                        Contact us at <a href="mailto:${supportEmail}" style="color:#e60000; text-decoration:none; font-weight:bold;">${supportEmail}</a>
+                        <div style="margin-top:25px; font-size:13px; color:#999999;">
+                          &copy; 2026 Ojaboy. All rights reserved.
+                        </div>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+        </html>
+      `;
+    },
+    text: (variables) => {
+      const fullName = getValue(variables, 'fullName', 'there');
+      const verificationLink = getValue(variables, 'verificationLink');
+      const expiresIn = getValue(variables, 'expiresIn', '1 hour');
+      const supportEmail = getValue(
+        variables,
+        'supportEmail',
+        'support@ojaboy.com',
+      );
+
+      return [
+        `Hello ${fullName},`,
+        '',
+        'Welcome to Ojaboy. Verify your email address to activate your account.',
+        `Verify your email: ${verificationLink}`,
+        '',
+        `This link expires in ${expiresIn}.`,
+        'If you did not create this account, you can safely ignore this email.',
+        '',
+        `Need help? Contact ${supportEmail}`,
+      ].join('\n');
+    },
+  },
   'password-setup': {
     subject: () => 'Set your Ojaboy password',
     html: (variables) => {

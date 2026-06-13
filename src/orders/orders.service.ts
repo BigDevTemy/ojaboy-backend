@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -9,6 +10,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   CouponDiscountType,
+  OrderFeedback,
+  OrderStatus,
   PaymentProvider,
   PaymentStatus,
   PriceUnit,
@@ -20,10 +23,13 @@ import {
   AddressesService,
   ResolvedDeliveryAddress,
 } from '../addresses/addresses.service';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { EmailService } from '../mail/email.service';
 import { PaymentsService } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CreateOrderFeedbackDto } from './dto/create-order-feedback.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { OrderPaginationQueryDto } from './dto/order-pagination-query.dto';
 import { QuoteOrderDto } from './dto/quote-order.dto';
 
 type PreparedOrderItem = {
@@ -111,6 +117,164 @@ export class OrdersService {
     return { order };
   }
 
+  async getUserOrderStats(userId: string) {
+    const [totalOrders, completedOrders, pendingOrders, moneySpent, rating] =
+      await this.prisma.$transaction([
+        this.prisma.order.count({ where: { userId } }),
+        this.prisma.order.count({
+          where: { userId, status: OrderStatus.delivered },
+        }),
+        this.prisma.order.count({
+          where: {
+            userId,
+            status: {
+              in: [
+                OrderStatus.pending,
+                OrderStatus.confirmed,
+                OrderStatus.processing,
+                OrderStatus.out_for_delivery,
+              ],
+            },
+          },
+        }),
+        this.prisma.payment.aggregate({
+          where: { userId, status: PaymentStatus.successful },
+          _sum: { amount: true },
+        }),
+        this.prisma.orderFeedback.aggregate({
+          where: { userId },
+          _avg: { rating: true },
+        }),
+      ]);
+
+    return {
+      totalOrders,
+      totalMoneySpent: moneySpent._sum.amount
+        ? this.toNumber(moneySpent._sum.amount)
+        : 0,
+      totalCompletedOrders: completedOrders,
+      totalPendingOrders: pendingOrders,
+      averageRating: rating._avg.rating ?? 0,
+    };
+  }
+
+  async getCurrentOrders(userId: string) {
+    const orders = await this.prisma.order.findMany({
+      where: {
+        userId,
+        status: {
+          in: [
+            OrderStatus.pending,
+            OrderStatus.confirmed,
+            OrderStatus.processing,
+            OrderStatus.out_for_delivery,
+          ],
+        },
+      },
+      include: this.orderInclude(),
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return { orders };
+  }
+
+  async getUserOrders(
+    userId: string,
+    { page = 1, limit = 50 }: OrderPaginationQueryDto,
+  ) {
+    const where = { userId };
+    const [orders, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        where,
+        include: this.orderInclude(),
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    return {
+      orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getUserOrder(userId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId },
+      include: this.orderInclude(),
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    return { order };
+  }
+
+  async createFeedback(
+    userId: string,
+    orderId: string,
+    dto: CreateOrderFeedbackDto,
+  ) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId },
+      select: { id: true, status: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (order.status !== OrderStatus.delivered) {
+      throw new BadRequestException(
+        'Feedback can only be submitted for a delivered order',
+      );
+    }
+
+    const existingFeedback = await this.prisma.orderFeedback.findUnique({
+      where: { orderId },
+      select: { id: true },
+    });
+
+    if (existingFeedback) {
+      throw new ConflictException('Feedback has already been submitted');
+    }
+
+    let feedback: OrderFeedback;
+
+    try {
+      feedback = await this.prisma.orderFeedback.create({
+        data: {
+          orderId,
+          userId,
+          rating: dto.rating,
+          comment: dto.comment?.trim() || null,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('Feedback has already been submitted');
+      }
+
+      throw error;
+    }
+
+    return {
+      message: 'Order feedback submitted successfully.',
+      feedback,
+    };
+  }
+
   async findUserOrderByEmailAndOrderId(email: string, orderId: string) {
     const user = await this.findUserByEmail(email);
     const order = await this.prisma.order.findFirst({
@@ -165,58 +329,78 @@ export class OrdersService {
     };
   }
 
-  async create(dto: CreateOrderDto) {
-    const email = dto.email.toLowerCase().trim();
-    const tokenHash = this.hashToken(dto.orderToken);
-
+  async create(dto: CreateOrderDto, authenticatedUser?: AuthUser) {
     const { order, payment, quote } = await this.prisma.$transaction(
       async (tx) => {
-        const challenge = await tx.orderOtpChallenge.findUnique({
-          where: { orderTokenHash: tokenHash },
-        });
+        let user: Pick<User, 'id' | 'email'>;
 
-        if (
-          !challenge ||
-          challenge.email !== email ||
-          !challenge.verifiedAt ||
-          !challenge.orderTokenExpiresAt ||
-          challenge.orderTokenExpiresAt.getTime() < Date.now() ||
-          challenge.consumedAt
-        ) {
-          throw new UnauthorizedException(
-            'Order token is invalid, expired, or already used',
-          );
-        }
-
-        const consumed = await tx.orderOtpChallenge.updateMany({
-          where: {
-            id: challenge.id,
-            consumedAt: null,
-          },
-          data: { consumedAt: new Date() },
-        });
-
-        if (consumed.count !== 1) {
-          throw new UnauthorizedException('Order token has already been used');
-        }
-
-        let user = await tx.user.findUnique({ where: { email } });
-
-        if (!user) {
-          if (!challenge.fullName) {
-            throw new BadRequestException(
-              'A full name is required to create this order',
+        if (authenticatedUser) {
+          user = {
+            id: authenticatedUser.id,
+            email: authenticatedUser.email,
+          };
+        } else {
+          if (!dto.email || !dto.orderToken) {
+            throw new UnauthorizedException(
+              'A valid access token or order token is required',
             );
           }
 
-          user = await tx.user.create({
-            data: {
-              email,
-              fullName: challenge.fullName,
-              authProviders: [],
-            },
+          const email = dto.email.toLowerCase().trim();
+          const tokenHash = this.hashToken(dto.orderToken);
+          const challenge = await tx.orderOtpChallenge.findUnique({
+            where: { orderTokenHash: tokenHash },
           });
+
+          if (
+            !challenge ||
+            challenge.email !== email ||
+            !challenge.verifiedAt ||
+            !challenge.orderTokenExpiresAt ||
+            challenge.orderTokenExpiresAt.getTime() < Date.now() ||
+            challenge.consumedAt
+          ) {
+            throw new UnauthorizedException(
+              'Order token is invalid, expired, or already used',
+            );
+          }
+
+          const consumed = await tx.orderOtpChallenge.updateMany({
+            where: {
+              id: challenge.id,
+              consumedAt: null,
+            },
+            data: { consumedAt: new Date() },
+          });
+
+          if (consumed.count !== 1) {
+            throw new UnauthorizedException(
+              'Order token has already been used',
+            );
+          }
+
+          const storedUser = await tx.user.findUnique({ where: { email } });
+
+          if (!storedUser) {
+            throw new UnauthorizedException(
+              'No user account was found for this email',
+            );
+          }
+
+          user = storedUser;
         }
+
+        const storedUser = await tx.user.findUnique({
+          where: { id: user.id },
+          select: { id: true, email: true },
+        });
+
+        if (!storedUser) {
+          throw new UnauthorizedException(
+            'The authenticated user account no longer exists',
+          );
+        }
+        user = storedUser;
 
         const quote = await this.calculateQuote(
           dto,
@@ -830,6 +1014,7 @@ export class OrdersService {
         },
       },
       payments: true,
+      feedback: true,
       address: true,
       deliveryZone: true,
       serviceFeeRule: true,

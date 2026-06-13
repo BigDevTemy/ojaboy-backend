@@ -19,7 +19,7 @@ import { JwtStrategy } from './jwt.strategy';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
         const expiresIn =
-          configService.get<StringValue>('JWT_EXPIRES_IN') ?? '15m';
+          configService.get<StringValue>('JWT_EXPIRES_IN') ?? '1h';
 
         return {
           secret: configService.get<string>('JWT_SECRET') ?? 'dev-jwt-secret',

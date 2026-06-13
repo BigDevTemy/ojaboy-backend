@@ -98,6 +98,7 @@ export class UsersService {
         },
       },
       payments: true,
+      feedback: true,
     } satisfies Prisma.OrderInclude;
   }
 }

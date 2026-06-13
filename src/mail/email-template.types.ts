@@ -1,4 +1,5 @@
 export type EmailTemplateName =
+  | 'email-verification'
   | 'password-setup'
   | 'order-status'
   | 'order-otp'

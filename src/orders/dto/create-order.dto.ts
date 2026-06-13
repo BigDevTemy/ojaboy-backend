@@ -8,12 +8,14 @@ import {
 import { QuoteOrderDto } from './quote-order.dto';
 
 export class CreateOrderDto extends QuoteOrderDto {
+  @IsOptional()
   @IsEmail()
-  email: string;
+  email?: string;
 
+  @IsOptional()
   @IsString()
   @MinLength(32)
-  orderToken: string;
+  orderToken?: string;
 
   @IsOptional()
   @IsString()

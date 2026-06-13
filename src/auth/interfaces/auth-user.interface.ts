@@ -4,6 +4,7 @@ export interface AuthUser {
   fullName: string;
   role: string;
   authProviders: string[];
+  emailVerified: boolean;
 }
 
 export interface StoredUser extends AuthUser {

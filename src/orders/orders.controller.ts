@@ -1,6 +1,20 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { InternalApiTokenGuard } from '../common/guards/internal-api-token.guard';
+import { CreateOrderFeedbackDto } from './dto/create-order-feedback.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { OrderPaginationQueryDto } from './dto/order-pagination-query.dto';
 import { QuoteOrderDto } from './dto/quote-order.dto';
 import { RetryOrderPaymentDto } from './dto/retry-order-payment.dto';
 import { OrdersService } from './orders.service';
@@ -12,6 +26,33 @@ export class OrdersController {
   @Get()
   findAll() {
     return this.ordersService.findAll();
+  }
+
+  @Get('stats')
+  @UseGuards(JwtAuthGuard)
+  getStats(@CurrentUser() user: AuthUser) {
+    return this.ordersService.getUserOrderStats(user.id);
+  }
+
+  @Get('current')
+  @UseGuards(JwtAuthGuard)
+  getCurrentOrders(@CurrentUser() user: AuthUser) {
+    return this.ordersService.getCurrentOrders(user.id);
+  }
+
+  @Get('mine')
+  @UseGuards(JwtAuthGuard)
+  getMyOrders(
+    @CurrentUser() user: AuthUser,
+    @Query() pagination: OrderPaginationQueryDto,
+  ) {
+    return this.ordersService.getUserOrders(user.id, pagination);
+  }
+
+  @Get('mine/:orderId')
+  @UseGuards(JwtAuthGuard)
+  getMyOrder(@CurrentUser() user: AuthUser, @Param('orderId') orderId: string) {
+    return this.ordersService.getUserOrder(user.id, orderId);
   }
 
   @Get('user/:email/:orderId')
@@ -30,13 +71,27 @@ export class OrdersController {
   }
 
   @Post()
-  create(@Body() createOrderDto: CreateOrderDto) {
-    return this.ordersService.create(createOrderDto);
+  @UseGuards(OptionalJwtAuthGuard)
+  create(
+    @Body() createOrderDto: CreateOrderDto,
+    @CurrentUser() user?: AuthUser,
+  ) {
+    return this.ordersService.create(createOrderDto, user);
   }
 
   @Post('quote')
   quote(@Body() quoteOrderDto: QuoteOrderDto) {
     return this.ordersService.quote(quoteOrderDto);
+  }
+
+  @Post(':orderId/feedback')
+  @UseGuards(JwtAuthGuard)
+  createFeedback(
+    @CurrentUser() user: AuthUser,
+    @Param('orderId') orderId: string,
+    @Body() dto: CreateOrderFeedbackDto,
+  ) {
+    return this.ordersService.createFeedback(user.id, orderId, dto);
   }
 
   @Post(':orderId/payment/retry')
