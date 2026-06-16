@@ -5,6 +5,7 @@ import {
   OrderStatus,
   PaymentStatus,
 } from '@prisma/client';
+import * as XLSX from 'xlsx';
 import { OrdersService } from './orders.service';
 
 describe('OrdersService order authentication', () => {
@@ -169,6 +170,146 @@ describe('OrdersService order authentication', () => {
         }),
       }),
     );
+  });
+
+  it('exports filtered orders as one spreadsheet row per order item', async () => {
+    const order = {
+      id: 'order-id',
+      userId: 'user-id',
+      status: OrderStatus.pending,
+      paymentStatus: OrderPaymentStatus.pending,
+      subtotal: 72000,
+      discountAmount: 0,
+      serviceFee: 1000,
+      deliveryFee: 2000,
+      total: 75000,
+      deliveryAddress: '12 Herbert Macaulay Way',
+      note: 'Call before delivery',
+      createdAt: new Date('2026-06-15T10:00:00.000Z'),
+      user: {
+        fullName: 'Customer',
+        email: 'customer@example.com',
+      },
+      deliveryZone: { name: 'Yaba' },
+      payments: [
+        {
+          id: 'payment-id',
+          status: PaymentStatus.pending,
+          provider: 'paystack',
+          providerReference: 'order_order-id',
+          createdAt: new Date('2026-06-15T10:01:00.000Z'),
+        },
+      ],
+      items: [
+        {
+          id: 'item-id',
+          productId: 'product-id',
+          product: { name: 'Local Rice' },
+          quantity: 1,
+          unit: 'bag',
+          unitPrice: 72000,
+          totalPrice: 72000,
+          buyPriceId: 'buy-price-id',
+        },
+      ],
+    };
+    const findMany = jest.fn().mockResolvedValue([order]);
+    const service = createService({ order: { findMany } });
+
+    const result = await service.exportOrders(
+      {
+        id: 'admin-id',
+        email: 'admin@example.com',
+        fullName: 'Admin',
+        role: 'admin',
+        authProviders: ['password'],
+        emailVerified: true,
+      },
+      {
+        page: 1,
+        limit: 50,
+        status: OrderStatus.pending,
+        paymentStatus: OrderPaymentStatus.pending,
+        from: '2026-06-15',
+        to: '2026-06-15',
+        format: 'xlsx',
+      },
+    );
+    const workbook = XLSX.read(result.buffer, { type: 'buffer' });
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
+      workbook.Sheets['Order Items'],
+    );
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: OrderStatus.pending,
+          paymentStatus: OrderPaymentStatus.pending,
+        }),
+      }),
+    );
+    expect(result.filename).toMatch(/^orders-export-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    expect(rows[0]).toEqual(
+      expect.objectContaining({
+        orderId: 'order-id',
+        productName: 'Local Rice',
+        quantity: 1,
+        unit: 'bag',
+        itemTotal: 72000,
+      }),
+    );
+  });
+
+  it('exports order item rows as csv', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'order-id',
+        userId: 'user-id',
+        status: OrderStatus.pending,
+        paymentStatus: OrderPaymentStatus.pending,
+        subtotal: 100,
+        discountAmount: 0,
+        serviceFee: 0,
+        deliveryFee: 0,
+        total: 100,
+        deliveryAddress: 'Address',
+        note: null,
+        createdAt: new Date('2026-06-15T10:00:00.000Z'),
+        user: { fullName: 'Customer', email: 'customer@example.com' },
+        deliveryZone: null,
+        payments: [],
+        items: [
+          {
+            id: 'item-id',
+            productId: 'product-id',
+            product: { name: 'Beans' },
+            quantity: 1,
+            unit: 'bag',
+            unitPrice: 100,
+            totalPrice: 100,
+            buyPriceId: null,
+          },
+        ],
+      },
+    ]);
+    const service = createService({ order: { findMany } });
+
+    const result = await service.exportOrders(
+      {
+        id: 'admin-id',
+        email: 'admin@example.com',
+        fullName: 'Admin',
+        role: 'admin',
+        authProviders: ['password'],
+        emailVerified: true,
+      },
+      { page: 1, limit: 50, format: 'csv' },
+    );
+
+    expect(result.contentType).toBe('text/csv; charset=utf-8');
+    expect(result.buffer.toString()).toContain('orderId,orderDate');
+    expect(result.buffer.toString()).toContain('order-id');
+    expect(result.buffer.toString()).toContain('Beans');
   });
 
   it('paginates user orders with a default limit of 50', async () => {

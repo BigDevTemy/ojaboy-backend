@@ -23,6 +23,7 @@ import {
   User,
 } from '@prisma/client';
 import { createHash } from 'node:crypto';
+import * as XLSX from 'xlsx';
 import {
   AddressesService,
   ResolvedDeliveryAddress,
@@ -103,6 +104,61 @@ type NotifiableOrder = {
   total: Prisma.Decimal | number;
 };
 
+type OrderWithExportRelations = Prisma.OrderGetPayload<{
+  include: ReturnType<OrdersService['orderInclude']>;
+}>;
+
+const ORDER_ITEM_EXPORT_HEADERS = [
+  'orderId',
+  'orderDate',
+  'customerName',
+  'customerEmail',
+  'orderStatus',
+  'paymentStatus',
+  'subtotal',
+  'discountAmount',
+  'serviceFee',
+  'deliveryFee',
+  'orderTotal',
+  'deliveryAddress',
+  'deliveryZone',
+  'note',
+  'itemId',
+  'productId',
+  'productName',
+  'quantity',
+  'unit',
+  'unitPrice',
+  'itemTotal',
+  'buyPriceId',
+  'latestPaymentId',
+  'latestPaymentStatus',
+  'latestPaymentProvider',
+  'latestPaymentReference',
+] as const;
+
+const ORDER_SUMMARY_EXPORT_HEADERS = [
+  'orderId',
+  'orderDate',
+  'customerName',
+  'customerEmail',
+  'orderStatus',
+  'paymentStatus',
+  'itemCount',
+  'subtotal',
+  'discountAmount',
+  'serviceFee',
+  'deliveryFee',
+  'orderTotal',
+  'deliveryAddress',
+  'deliveryZone',
+  'note',
+  'latestPaymentId',
+  'latestPaymentStatus',
+  'latestPaymentProvider',
+  'latestPaymentReference',
+] as const;
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -140,6 +196,51 @@ export class OrdersService {
         total,
         totalPages: Math.ceil(total / limit),
       },
+    };
+  }
+
+  async exportOrders(user: AuthUser, query: OrderListQueryDto) {
+    this.assertAdmin(user);
+
+    const format = query.format ?? 'xlsx';
+    const orders = await this.prisma.order.findMany({
+      where: this.toOrderListWhere(query),
+      include: this.orderInclude(),
+      orderBy: { createdAt: 'desc' },
+    });
+    const itemRows = this.toOrderItemExportRows(orders);
+    const summaryRows = this.toOrderSummaryExportRows(orders);
+    const timestamp = new Date().toISOString().slice(0, 10);
+
+    if (format === 'csv') {
+      return {
+        filename: `orders-export-${timestamp}.csv`,
+        contentType: 'text/csv; charset=utf-8',
+        buffer: Buffer.from(this.toCsv(ORDER_ITEM_EXPORT_HEADERS, itemRows)),
+      };
+    }
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet(itemRows, {
+        header: [...ORDER_ITEM_EXPORT_HEADERS],
+      }),
+      'Order Items',
+    );
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet(summaryRows, {
+        header: [...ORDER_SUMMARY_EXPORT_HEADERS],
+      }),
+      'Orders Summary',
+    );
+
+    return {
+      filename: `orders-export-${timestamp}.xlsx`,
+      contentType:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }),
     };
   }
 
@@ -1300,7 +1401,9 @@ export class OrdersService {
             gte: query.from
               ? this.parseOrderDateBoundary(query.from, 'start')
               : undefined,
-            lte: query.to ? this.parseOrderDateBoundary(query.to, 'end') : undefined,
+            lte: query.to
+              ? this.parseOrderDateBoundary(query.to, 'end')
+              : undefined,
           }
         : undefined;
 
@@ -1310,6 +1413,90 @@ export class OrdersService {
       userId: query.userId,
       createdAt,
     };
+  }
+
+  private toOrderItemExportRows(orders: OrderWithExportRelations[]) {
+    return orders.flatMap((order) => {
+      const payment = this.getLatestPayment(order);
+      const common = this.toOrderExportCommon(order, payment);
+
+      return order.items.map((item) => ({
+        ...common,
+        itemId: item.id,
+        productId: item.productId,
+        productName: item.product.name,
+        quantity: this.toNumber(item.quantity),
+        unit: item.unit,
+        unitPrice: this.toNumber(item.unitPrice),
+        itemTotal: this.toNumber(item.totalPrice),
+        buyPriceId: item.buyPriceId ?? '',
+      }));
+    });
+  }
+
+  private toOrderSummaryExportRows(orders: OrderWithExportRelations[]) {
+    return orders.map((order) => {
+      const payment = this.getLatestPayment(order);
+
+      return {
+        ...this.toOrderExportCommon(order, payment),
+        itemCount: order.items.length,
+      };
+    });
+  }
+
+  private toOrderExportCommon(
+    order: OrderWithExportRelations,
+    payment: OrderWithExportRelations['payments'][number] | undefined,
+  ) {
+    return {
+      orderId: order.id,
+      orderDate: order.createdAt.toISOString(),
+      customerName: order.user.fullName,
+      customerEmail: order.user.email,
+      orderStatus: order.status,
+      paymentStatus: order.paymentStatus,
+      subtotal: this.toNumber(order.subtotal),
+      discountAmount: this.toNumber(order.discountAmount),
+      serviceFee: this.toNumber(order.serviceFee),
+      deliveryFee: this.toNumber(order.deliveryFee),
+      orderTotal: this.toNumber(order.total),
+      deliveryAddress: order.deliveryAddress ?? '',
+      deliveryZone: order.deliveryZone?.name ?? '',
+      note: order.note ?? '',
+      latestPaymentId: payment?.id ?? '',
+      latestPaymentStatus: payment?.status ?? '',
+      latestPaymentProvider: payment?.provider ?? '',
+      latestPaymentReference: payment?.providerReference ?? '',
+    };
+  }
+
+  private getLatestPayment(order: OrderWithExportRelations) {
+    return [...order.payments].sort(
+      (first, second) => second.createdAt.getTime() - first.createdAt.getTime(),
+    )[0];
+  }
+
+  private toCsv<T extends Record<string, unknown>>(
+    headers: readonly string[],
+    rows: T[],
+  ) {
+    return [
+      headers.join(','),
+      ...rows.map((row) =>
+        headers.map((header) => this.escapeCsvCell(row[header])).join(','),
+      ),
+    ].join('\n');
+  }
+
+  private escapeCsvCell(value: unknown) {
+    const text = value === null || value === undefined ? '' : String(value);
+
+    if (/[",\n\r]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+
+    return text;
   }
 
   private parseOrderDateBoundary(value: string, boundary: 'start' | 'end') {

@@ -6,8 +6,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -65,6 +67,23 @@ export class OrdersController {
     @Param('orderId') orderId: string,
   ) {
     return this.ordersService.findUserOrderByEmailAndOrderId(email, orderId);
+  }
+
+  @Get('export')
+  @UseGuards(JwtAuthGuard)
+  async exportOrders(
+    @CurrentUser() user: AuthUser,
+    @Query() query: OrderListQueryDto,
+    @Res() response: Response,
+  ) {
+    const exportFile = await this.ordersService.exportOrders(user, query);
+
+    response.setHeader('Content-Type', exportFile.contentType);
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${exportFile.filename}"`,
+    );
+    response.send(exportFile.buffer);
   }
 
   @Get(':id')
