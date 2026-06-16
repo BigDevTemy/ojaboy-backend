@@ -177,16 +177,14 @@ export class OrdersService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
     const where = this.toOrderListWhere(query);
-    const [orders, total] = await this.prisma.$transaction([
-      this.prisma.order.findMany({
-        where,
-        include: this.orderInclude(),
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.order.count({ where }),
-    ]);
+    const orders = await this.prisma.order.findMany({
+      where,
+      include: this.orderInclude(),
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    const total = await this.prisma.order.count({ where });
 
     return {
       data: orders,
