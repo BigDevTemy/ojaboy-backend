@@ -1,9 +1,11 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -23,6 +25,10 @@ import {
   AddressesService,
   ResolvedDeliveryAddress,
 } from '../addresses/addresses.service';
+import {
+  AddressDetailsDto,
+  AddressLocationDto,
+} from '../addresses/dto/address-details.dto';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { EmailService } from '../mail/email.service';
 import { PaymentsService } from '../payments/payments.service';
@@ -31,6 +37,7 @@ import { CreateOrderFeedbackDto } from './dto/create-order-feedback.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderPaginationQueryDto } from './dto/order-pagination-query.dto';
 import { QuoteOrderDto } from './dto/quote-order.dto';
+import { OrderQuoteNormalizerService } from './order-quote-normalizer.service';
 
 type PreparedOrderItem = {
   productId: string;
@@ -60,8 +67,8 @@ type OrderQuote = {
   deliveryAddress: {
     id?: string;
     label: string | null;
-    recipientName: string;
-    phoneNumber: string;
+    recipientName: string | null;
+    phoneNumber: string | null;
     formattedAddress: string;
     googlePlaceId: string;
     latitude: number;
@@ -93,6 +100,7 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly addressesService: AddressesService,
     private readonly paymentsService: PaymentsService,
+    private readonly orderQuoteNormalizer: OrderQuoteNormalizerService,
   ) {}
 
   async findAll() {
@@ -289,28 +297,40 @@ export class OrdersService {
     return { order };
   }
 
-  async quote(dto: QuoteOrderDto) {
-    if (!dto.customerEmail) {
-      throw new BadRequestException({
-        statusCode: 400,
-        code: 'CUSTOMER_EMAIL_REQUIRED_FOR_DELIVERY',
-        message:
-          'customerEmail is required so the delivery address can be associated with the customer.',
-      });
-    }
+  async quote(dto: QuoteOrderDto, authenticatedUser?: AuthUser) {
+    const customer = await this.resolveQuoteCustomer(dto, authenticatedUser);
 
-    const customer = await this.prisma.user.findUnique({
-      where: { email: dto.customerEmail.toLowerCase().trim() },
-      select: { id: true, email: true },
-    });
+    if (dto.orderText) {
+      const normalized = await this.orderQuoteNormalizer.normalize(
+        dto.orderText,
+      );
 
-    if (!customer) {
-      throw new NotFoundException({
-        statusCode: 404,
-        code: 'CUSTOMER_NOT_FOUND',
+      if (!normalized.canProceed) {
+        return {
+          message: `${normalized.summary.requiresAttention} item${normalized.summary.requiresAttention === 1 ? '' : 's'} require your attention before the quote can be completed.`,
+          ...normalized,
+        };
+      }
+
+      const quote = await this.calculateQuote(
+        { ...dto, items: normalized.quoteItems },
+        customer,
+      );
+      const { deliveryAddress, ...publicQuote } = quote;
+
+      return {
         message:
-          'No customer account was found for this email. Create the customer account before requesting a quote.',
-      });
+          'All items were understood and the order quote was calculated successfully.',
+        ...normalized,
+        quote: {
+          ...publicQuote,
+          deliveryAddress: {
+            id: deliveryAddress.id,
+            label: deliveryAddress.label,
+            deliveryZone: deliveryAddress.deliveryZone,
+          },
+        },
+      };
     }
 
     const quote = await this.calculateQuote(dto, customer);
@@ -329,165 +349,281 @@ export class OrdersService {
     };
   }
 
-  async create(dto: CreateOrderDto, authenticatedUser?: AuthUser) {
-    const { order, payment, quote } = await this.prisma.$transaction(
-      async (tx) => {
-        let user: Pick<User, 'id' | 'email'>;
+  private async resolveQuoteCustomer(
+    dto: QuoteOrderDto,
+    authenticatedUser?: AuthUser,
+  ): Promise<QuoteCustomer> {
+    if (authenticatedUser) {
+      return {
+        id: authenticatedUser.id,
+        email: authenticatedUser.email,
+      };
+    }
 
-        if (authenticatedUser) {
-          user = {
-            id: authenticatedUser.id,
-            email: authenticatedUser.email,
-          };
-        } else {
-          if (!dto.email || !dto.orderToken) {
-            throw new UnauthorizedException(
-              'A valid access token or order token is required',
-            );
+    if (!dto.customerEmail) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'CUSTOMER_EMAIL_REQUIRED_FOR_DELIVERY',
+        message:
+          'A JWT access token or customerEmail is required so delivery can be associated with the customer.',
+      });
+    }
+
+    const customer = await this.prisma.user.findUnique({
+      where: { email: dto.customerEmail.toLowerCase().trim() },
+      select: { id: true, email: true },
+    });
+
+    if (!customer) {
+      throw new NotFoundException({
+        statusCode: 404,
+        code: 'CUSTOMER_NOT_FOUND',
+        message:
+          'No customer account was found for this email. Create the customer account before requesting a quote.',
+      });
+    }
+
+    return customer;
+  }
+
+  async create(
+    dto: CreateOrderDto,
+    authenticatedUser?: AuthUser,
+    options?: { wishlistId?: string },
+  ) {
+    if (!dto.items?.length) {
+      throw new BadRequestException(
+        'Order creation requires confirmed structured items',
+      );
+    }
+
+    const runTransaction = () =>
+      this.prisma.$transaction(
+        async (tx) => {
+          let user: Pick<User, 'id' | 'email'>;
+
+          if (authenticatedUser) {
+            user = {
+              id: authenticatedUser.id,
+              email: authenticatedUser.email,
+            };
+          } else {
+            if (!dto.email || !dto.orderToken) {
+              throw new UnauthorizedException(
+                'A valid access token or order token is required',
+              );
+            }
+
+            const email = dto.email.toLowerCase().trim();
+            const tokenHash = this.hashToken(dto.orderToken);
+            const challenge = await tx.orderOtpChallenge.findUnique({
+              where: { orderTokenHash: tokenHash },
+            });
+
+            if (
+              !challenge ||
+              challenge.email !== email ||
+              !challenge.verifiedAt ||
+              !challenge.orderTokenExpiresAt ||
+              challenge.orderTokenExpiresAt.getTime() < Date.now() ||
+              challenge.consumedAt
+            ) {
+              throw new UnauthorizedException(
+                'Order token is invalid, expired, or already used',
+              );
+            }
+
+            const consumed = await tx.orderOtpChallenge.updateMany({
+              where: {
+                id: challenge.id,
+                consumedAt: null,
+              },
+              data: { consumedAt: new Date() },
+            });
+
+            if (consumed.count !== 1) {
+              throw new UnauthorizedException(
+                'Order token has already been used',
+              );
+            }
+
+            const storedUser = await tx.user.findUnique({ where: { email } });
+
+            if (!storedUser) {
+              throw new UnauthorizedException(
+                'No user account was found for this email',
+              );
+            }
+
+            user = storedUser;
           }
 
-          const email = dto.email.toLowerCase().trim();
-          const tokenHash = this.hashToken(dto.orderToken);
-          const challenge = await tx.orderOtpChallenge.findUnique({
-            where: { orderTokenHash: tokenHash },
+          const storedUser = await tx.user.findUnique({
+            where: { id: user.id },
+            select: { id: true, email: true },
           });
-
-          if (
-            !challenge ||
-            challenge.email !== email ||
-            !challenge.verifiedAt ||
-            !challenge.orderTokenExpiresAt ||
-            challenge.orderTokenExpiresAt.getTime() < Date.now() ||
-            challenge.consumedAt
-          ) {
-            throw new UnauthorizedException(
-              'Order token is invalid, expired, or already used',
-            );
-          }
-
-          const consumed = await tx.orderOtpChallenge.updateMany({
-            where: {
-              id: challenge.id,
-              consumedAt: null,
-            },
-            data: { consumedAt: new Date() },
-          });
-
-          if (consumed.count !== 1) {
-            throw new UnauthorizedException(
-              'Order token has already been used',
-            );
-          }
-
-          const storedUser = await tx.user.findUnique({ where: { email } });
 
           if (!storedUser) {
             throw new UnauthorizedException(
-              'No user account was found for this email',
+              'The authenticated user account no longer exists',
             );
           }
-
           user = storedUser;
-        }
 
-        const storedUser = await tx.user.findUnique({
-          where: { id: user.id },
-          select: { id: true, email: true },
-        });
-
-        if (!storedUser) {
-          throw new UnauthorizedException(
-            'The authenticated user account no longer exists',
+          const quote = await this.calculateQuote(
+            dto,
+            { id: user.id, email: user.email },
+            tx,
+            true,
           );
-        }
-        user = storedUser;
 
-        const quote = await this.calculateQuote(
-          dto,
-          { id: user.id, email: user.email },
-          tx,
-          true,
-        );
+          if (!quote.deliveryAddressId) {
+            throw new UnprocessableEntityException({
+              statusCode: 422,
+              code: 'DELIVERY_ADDRESS_NOT_SAVED',
+              message:
+                'The delivery address could not be saved for this order.',
+            });
+          }
 
-        if (!quote.deliveryAddressId) {
-          throw new UnprocessableEntityException({
-            statusCode: 422,
-            code: 'DELIVERY_ADDRESS_NOT_SAVED',
-            message: 'The delivery address could not be saved for this order.',
-          });
-        }
-
-        const createdOrder = await tx.order.create({
-          data: {
-            userId: user.id,
-            deliveryAddressId: quote.deliveryAddressId,
-            deliveryZoneId: quote.deliveryZoneId,
-            serviceFeeRuleId: quote.serviceFeeRuleId,
-            promotionId: quote.promotionId,
-            couponId: quote.couponId,
-            subtotal: quote.subtotal,
-            discountAmount: quote.discountAmount,
-            promotionDiscount: quote.promotionDiscount,
-            couponDiscount: quote.couponDiscount,
-            serviceFee: quote.serviceFee,
-            serviceFeePercentage: quote.serviceFeePercentage,
-            serviceFeeBase: quote.serviceFeeBase,
-            deliveryFee: quote.deliveryFee,
-            total: quote.total,
-            couponCode: quote.couponCode,
-            promotionName: quote.promotionName,
-            deliveryRecipientName: quote.deliveryAddress.recipientName,
-            deliveryPhoneNumber: quote.deliveryAddress.phoneNumber,
-            deliveryAddress: quote.deliveryAddress.formattedAddress,
-            deliveryGooglePlaceId: quote.deliveryAddress.googlePlaceId,
-            deliveryLatitude: quote.deliveryAddress.latitude,
-            deliveryLongitude: quote.deliveryAddress.longitude,
-            note: dto.note?.trim(),
-            items: {
-              create: quote.items.map((item) => ({
-                productId: item.productId,
-                buyPriceId: item.buyPriceId,
-                quantity: item.quantity,
-                unit: item.unit,
-                unitPrice: item.unitPrice,
-                totalPrice: item.totalPrice,
-              })),
-            },
-          },
-          include: this.orderInclude(),
-        });
-
-        if (quote.couponId && quote.couponDiscount > 0) {
-          await tx.couponRedemption.create({
+          const createdOrder = await tx.order.create({
             data: {
+              userId: user.id,
+              deliveryAddressId: quote.deliveryAddressId,
+              deliveryZoneId: quote.deliveryZoneId,
+              serviceFeeRuleId: quote.serviceFeeRuleId,
+              promotionId: quote.promotionId,
               couponId: quote.couponId,
+              subtotal: quote.subtotal,
+              discountAmount: quote.discountAmount,
+              promotionDiscount: quote.promotionDiscount,
+              couponDiscount: quote.couponDiscount,
+              serviceFee: quote.serviceFee,
+              serviceFeePercentage: quote.serviceFeePercentage,
+              serviceFeeBase: quote.serviceFeeBase,
+              deliveryFee: quote.deliveryFee,
+              total: quote.total,
+              couponCode: quote.couponCode,
+              promotionName: quote.promotionName,
+              deliveryRecipientName: quote.deliveryAddress.recipientName,
+              deliveryPhoneNumber: quote.deliveryAddress.phoneNumber,
+              deliveryAddress: quote.deliveryAddress.formattedAddress,
+              deliveryGooglePlaceId: quote.deliveryAddress.googlePlaceId,
+              deliveryLatitude: quote.deliveryAddress.latitude,
+              deliveryLongitude: quote.deliveryAddress.longitude,
+              note: dto.note?.trim(),
+              items: {
+                create: quote.items.map((item) => ({
+                  productId: item.productId,
+                  buyPriceId: item.buyPriceId,
+                  quantity: item.quantity,
+                  unit: item.unit,
+                  unitPrice: item.unitPrice,
+                  totalPrice: item.totalPrice,
+                })),
+              },
+            },
+            include: this.orderInclude(),
+          });
+
+          if (quote.couponId && quote.couponDiscount > 0) {
+            await tx.couponRedemption.create({
+              data: {
+                couponId: quote.couponId,
+                userId: user.id,
+                orderId: createdOrder.id,
+                discountAmount: quote.couponDiscount,
+              },
+            });
+          }
+
+          const payment = await tx.payment.create({
+            data: {
               userId: user.id,
               orderId: createdOrder.id,
-              discountAmount: quote.couponDiscount,
+              amount: quote.total,
+              currency: quote.currency,
+              provider: PaymentProvider.paystack,
+              providerReference: `order_${createdOrder.id}`,
+              status: PaymentStatus.initializing,
             },
           });
-        }
 
-        const payment = await tx.payment.create({
-          data: {
-            userId: user.id,
-            orderId: createdOrder.id,
-            amount: quote.total,
-            currency: quote.currency,
-            provider: PaymentProvider.paystack,
-            providerReference: `order_${createdOrder.id}`,
-            status: PaymentStatus.initializing,
-          },
-        });
-        const order = await tx.order.findUniqueOrThrow({
-          where: { id: createdOrder.id },
-          include: this.orderInclude(),
-        });
+          if (options?.wishlistId) {
+            const converted = await tx.wishlist.updateMany({
+              where: {
+                id: options.wishlistId,
+                userId: user.id,
+                convertedAt: null,
+                orderId: null,
+              },
+              data: {
+                convertedAt: new Date(),
+                orderId: createdOrder.id,
+              },
+            });
 
-        return { order, payment, quote };
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+            if (converted.count !== 1) {
+              throw new ConflictException(
+                'The wishlist was already converted or is unavailable',
+              );
+            }
+          }
+
+          const order = await tx.order.findUniqueOrThrow({
+            where: { id: createdOrder.id },
+            include: this.orderInclude(),
+          });
+
+          return { order, payment, quote };
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000,
+          timeout: 30_000,
+        },
+      );
+
+    let transactionResult: Awaited<ReturnType<typeof runTransaction>>;
+
+    try {
+      transactionResult = await runTransaction();
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      const prismaCode =
+        error instanceof Prisma.PrismaClientKnownRequestError
+          ? error.code
+          : undefined;
+
+      if (prismaCode === 'P2028') {
+        throw new ServiceUnavailableException({
+          statusCode: 503,
+          code: 'ORDER_TRANSACTION_TIMEOUT',
+          message:
+            'Order creation took too long to complete. No order or address was saved. Please retry.',
+        });
+      }
+
+      if (prismaCode === 'P2034') {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'ORDER_TRANSACTION_CONFLICT',
+          message:
+            'The order could not be completed because pricing or checkout data changed. Please retry.',
+        });
+      }
+
+      this.logger.error(
+        'Order creation transaction failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw error;
+    }
+
+    const { order, payment, quote } = transactionResult;
 
     const paymentInitialization =
       await this.paymentsService.initializePaymentAttempt(payment.id);
@@ -579,7 +715,7 @@ export class OrdersService {
       ? persistSuppliedAddress
         ? await this.addressesService.getOrCreateOrderAddress(
             customer.id,
-            dto.deliveryAddress,
+            this.requireCompleteOrderAddress(dto.deliveryAddress),
             db,
           )
         : await this.addressesService.resolveOrderAddress(
@@ -731,6 +867,23 @@ export class OrdersService {
     }
 
     return deliveryFee;
+  }
+
+  private requireCompleteOrderAddress(
+    address: AddressLocationDto,
+  ): AddressDetailsDto {
+    const candidate = address as AddressDetailsDto;
+
+    if (!candidate.recipientName?.trim() || !candidate.phoneNumber?.trim()) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        code: 'DELIVERY_CONTACT_REQUIRED',
+        message:
+          'recipientName and phoneNumber are required before the delivery address can be saved with an order.',
+      });
+    }
+
+    return candidate;
   }
 
   private async calculateServiceFee(

@@ -10,7 +10,10 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { AddressDetailsDto } from './dto/address-details.dto';
+import {
+  AddressDetailsDto,
+  AddressLocationDto,
+} from './dto/address-details.dto';
 import { CreateAddressDto } from './dto/create-address.dto';
 
 type DeliveryAreaWithZone = DeliveryArea & {
@@ -39,8 +42,8 @@ export type ResolvedDeliveryAddress = {
   id?: string;
   deliveryZoneId: string;
   label: string | null;
-  recipientName: string;
-  phoneNumber: string;
+  recipientName: string | null;
+  phoneNumber: string | null;
   formattedAddress: string;
   googlePlaceId: string;
   latitude: Prisma.Decimal | number;
@@ -183,7 +186,7 @@ export class AddressesService {
   }
 
   async resolveOrderAddress(
-    dto: AddressDetailsDto,
+    dto: AddressLocationDto,
     db: DatabaseClient = this.prisma,
   ): Promise<ResolvedDeliveryAddress> {
     const resolution = await this.resolveDeliveryZone(dto, db);
@@ -207,8 +210,8 @@ export class AddressesService {
     return {
       deliveryZoneId: resolution.deliveryArea.deliveryZoneId,
       label: this.clean(dto.label) ?? null,
-      recipientName: dto.recipientName.trim(),
-      phoneNumber: dto.phoneNumber.trim(),
+      recipientName: null,
+      phoneNumber: null,
       formattedAddress: dto.formattedAddress.trim(),
       googlePlaceId: dto.googlePlaceId.trim(),
       latitude: dto.latitude,
@@ -396,7 +399,7 @@ export class AddressesService {
   }
 
   private async resolveDeliveryZone(
-    address: AddressDetailsDto,
+    address: AddressLocationDto,
     db: DatabaseClient,
   ): Promise<ZoneResolution> {
     const candidates = this.addressCandidates(address);

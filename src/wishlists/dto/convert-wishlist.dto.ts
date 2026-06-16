@@ -1,30 +1,23 @@
 import { Transform, Type } from 'class-transformer';
 import {
-  IsEmail,
   IsOptional,
   IsString,
   MaxLength,
-  MinLength,
   ValidateNested,
 } from 'class-validator';
 import { AddressDetailsDto } from '../../addresses/dto/address-details.dto';
-import { normalizeOptionalAddress, QuoteOrderDto } from './quote-order.dto';
+import { normalizeOptionalAddress } from '../../orders/dto/quote-order.dto';
 
-export class CreateOrderDto extends QuoteOrderDto {
+export class ConvertWishlistDto {
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
+
   @IsOptional()
   @Transform(({ value }) => normalizeOptionalAddress(value))
   @ValidateNested()
   @Type(() => AddressDetailsDto)
-  declare deliveryAddress?: AddressDetailsDto;
-
-  @IsOptional()
-  @IsEmail()
-  email?: string;
-
-  @IsOptional()
-  @IsString()
-  @MinLength(32)
-  orderToken?: string;
+  deliveryAddress?: AddressDetailsDto;
 
   @IsOptional()
   @IsString()

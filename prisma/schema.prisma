@@ -27,6 +27,8 @@ model User {
   couponEligibilities CouponCustomer[]
   couponRedemptions   CouponRedemption[]
   orderFeedbacks      OrderFeedback[]
+  wishlists           Wishlist[]
+  priceAlerts         PriceAlert[]
 
   @@map("users")
 }
@@ -334,6 +336,20 @@ enum BuyPriceStrategy {
   manual_override
 }
 
+enum PriceAlertCondition {
+  below
+  above
+  at_or_below
+  at_or_above
+}
+
+enum PriceAlertStatus {
+  active
+  paused
+  triggered
+  cancelled
+}
+
 model Product {
   id           String           @id @default(uuid())
   name         String
@@ -347,9 +363,35 @@ model Product {
   marketPrices MarketPrice[]
   buyPrices    BuyPrice[]
   orderItems   OrderItem[]
+  wishlistItems WishlistItem[]
+  priceAlerts PriceAlert[]
 
   @@index([category])
   @@map("products")
+}
+
+model PriceAlert {
+  id              String              @id @default(uuid())
+  userId          String              @map("user_id")
+  productId       String              @map("product_id")
+  targetPrice     Decimal             @map("target_price") @db.Decimal(12, 2)
+  currency        String              @default("NGN")
+  unit            PriceUnit
+  condition       PriceAlertCondition @default(at_or_below)
+  status          PriceAlertStatus    @default(active)
+  lastTriggeredAt DateTime?           @map("last_triggered_at")
+  triggeredPrice  Decimal?            @map("triggered_price") @db.Decimal(12, 2)
+  triggerCount    Int                 @default(0) @map("trigger_count")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product         Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([productId])
+  @@index([status])
+  @@index([productId, unit, status])
+  @@map("price_alerts")
 }
 
 model MarketPrice {
@@ -561,6 +603,7 @@ model Order {
   feedback             OrderFeedback?
   items                OrderItem[]
   payments             Payment[]
+  wishlist             Wishlist?
 
   @@index([userId])
   @@index([deliveryAddressId])
@@ -571,6 +614,40 @@ model Order {
   @@index([promotionId])
   @@index([couponId])
   @@map("orders")
+}
+
+model Wishlist {
+  id          String         @id @default(uuid())
+  userId      String         @map("user_id")
+  name        String         @default("My Wishlist")
+  orderId     String?        @unique @map("order_id")
+  convertedAt DateTime?      @map("converted_at")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order       Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  items       WishlistItem[]
+
+  @@index([userId])
+  @@index([convertedAt])
+  @@map("wishlists")
+}
+
+model WishlistItem {
+  id         String    @id @default(uuid())
+  wishlistId String    @map("wishlist_id")
+  productId  String    @map("product_id")
+  quantity   Decimal   @db.Decimal(12, 2)
+  unit       PriceUnit
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  wishlist   Wishlist  @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
+  product    Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([wishlistId, productId, unit])
+  @@index([wishlistId])
+  @@index([productId])
+  @@map("wishlist_items")
 }
 
 model OrderFeedback {

@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsNotEmptyObject,
   IsNumber,
@@ -12,19 +12,11 @@ import {
   MinLength,
 } from 'class-validator';
 
-export class AddressDetailsDto {
+export class AddressLocationDto {
   @IsOptional()
   @IsString()
   @MaxLength(50)
   label?: string;
-
-  @IsString()
-  @MinLength(1)
-  @MaxLength(150)
-  recipientName: string;
-
-  @IsPhoneNumber()
-  phoneNumber: string;
 
   @IsString()
   @MinLength(5)
@@ -106,4 +98,32 @@ export class AddressDetailsDto {
   @IsObject()
   @IsNotEmptyObject()
   googleAddressData?: Record<string, unknown>;
+}
+
+export class QuoteAddressDto extends AddressLocationDto {
+  @IsOptional()
+  @Transform(({ value }) => emptyStringToUndefined(value))
+  @IsString()
+  @MinLength(1)
+  @MaxLength(150)
+  recipientName?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => emptyStringToUndefined(value))
+  @IsPhoneNumber()
+  phoneNumber?: string;
+}
+
+export class AddressDetailsDto extends AddressLocationDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(150)
+  recipientName: string;
+
+  @IsPhoneNumber()
+  phoneNumber: string;
+}
+
+function emptyStringToUndefined(value: unknown): unknown {
+  return typeof value === 'string' && value.trim() === '' ? undefined : value;
 }

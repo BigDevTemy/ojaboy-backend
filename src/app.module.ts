@@ -17,10 +17,12 @@ import { MarketPricesModule } from './market-prices/market-prices.module';
 import { MarketsModule } from './markets/markets.module';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
+import { PriceAlertsModule } from './price-alerts/price-alerts.module';
 import { PricesModule } from './prices/prices.module';
 import { ProductsModule } from './products/products.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { UsersModule } from './users/users.module';
+import { WishlistsModule } from './wishlists/wishlists.module';
 
 @Module({
   imports: [
@@ -64,10 +66,12 @@ import { UsersModule } from './users/users.module';
     ProductsModule,
     PricesModule,
     PaymentsModule,
+    PriceAlertsModule,
     UsersModule,
     AccessControlModule,
     AddressesModule,
     CommerceConfigModule,
+    WishlistsModule,
   ],
   controllers: [AppController],
   providers: [

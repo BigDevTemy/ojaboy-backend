@@ -38,8 +38,36 @@ used to create one order.
 
 ```http
 POST /orders/quote
+Authorization: Bearer <access-token>
 Content-Type: application/json
 ```
+
+Authenticated customers may submit a natural-language shopping list. The
+customer and default delivery address are obtained from the JWT:
+
+```json
+{
+  "orderText": "1 bottler palm oil, 1/4 basket of garri, two derica of rice"
+}
+```
+
+When `deliveryAddress` is omitted, `null`, `{}`, or contains only blank values,
+the authenticated customer's default address is used. A complete Google Maps
+address may be supplied to quote delivery to another location. It is checked
+with the same delivery-area resolver used by `POST /addresses`, but it is not
+saved during quotation and does not require `recipientName` or `phoneNumber`.
+Those contact fields are required when the order is created, at which point
+the address is saved inside the order transaction. An explicitly supplied
+address outside coverage stops the quote with
+`422 ADDRESS_OUTSIDE_DELIVERY_COVERAGE`.
+
+The server normalizes number words, common unit spelling mistakes, `1/2`, and
+`1/4`. Each requested unit is checked against the product's active buy prices.
+Unsupported units and uncertain products are returned as descriptive
+item-level results, including the units currently available for that product.
+Other fractions, including `1/3` and `3/4`, are rejected for that item.
+
+The existing structured quote request remains supported:
 
 ```json
 {
@@ -48,14 +76,13 @@ Content-Type: application/json
       "buyPriceId": "00000000-0000-0000-0000-000000000000",
       "quantity": 2
     }
-  ],
-  "deliveryZoneId": "00000000-0000-0000-0000-000000000000"
+  ]
 }
 ```
 
-`deliveryZoneId` is optional. Item prices, service fees, and delivery fees are
-calculated by the server. Configure the service fee with
-`ORDER_SERVICE_FEE_PERCENT`.
+Clients without a JWT must include `customerEmail`. Item prices, service fees,
+and delivery fees are calculated by the server. Configure the service fee
+with `ORDER_SERVICE_FEE_PERCENT`.
 
 ## 4. Create the order
 

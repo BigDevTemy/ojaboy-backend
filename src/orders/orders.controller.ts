@@ -80,8 +80,9 @@ export class OrdersController {
   }
 
   @Post('quote')
-  quote(@Body() quoteOrderDto: QuoteOrderDto) {
-    return this.ordersService.quote(quoteOrderDto);
+  @UseGuards(OptionalJwtAuthGuard)
+  quote(@Body() quoteOrderDto: QuoteOrderDto, @CurrentUser() user?: AuthUser) {
+    return this.ordersService.quote(quoteOrderDto, user);
   }
 
   @Post(':orderId/feedback')

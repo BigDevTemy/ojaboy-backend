@@ -10,6 +10,7 @@ describe('OrdersService order authentication', () => {
       prisma as never,
       {} as never,
       {} as never,
+      {} as never,
     );
 
   it('rejects order creation without a JWT user or order token', async () => {
