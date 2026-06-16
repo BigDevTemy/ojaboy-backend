@@ -1,5 +1,6 @@
 import {
   PriceAlertCondition,
+  PriceAlertFrequency,
   PriceAlertStatus,
   PriceUnit,
   Prisma,
@@ -24,6 +25,7 @@ describe('PriceAlertsService', () => {
     currency: 'NGN',
     unit: PriceUnit.bag,
     condition: PriceAlertCondition.at_or_below,
+    frequency: PriceAlertFrequency.one_time,
     status: PriceAlertStatus.active,
     lastTriggeredAt: null,
     triggeredPrice: null,
@@ -57,6 +59,7 @@ describe('PriceAlertsService', () => {
           targetPrice: 60000,
           currency: 'NGN',
           unit: PriceUnit.bag,
+          frequency: undefined,
         }),
       }),
     );
@@ -105,12 +108,16 @@ describe('PriceAlertsService', () => {
 
     const result = await service.update(userId, priceAlert.id, {
       status: PriceAlertStatus.paused,
+      frequency: PriceAlertFrequency.once_per_day,
     });
 
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: priceAlert.id },
-        data: expect.objectContaining({ status: PriceAlertStatus.paused }),
+        data: expect.objectContaining({
+          status: PriceAlertStatus.paused,
+          frequency: PriceAlertFrequency.once_per_day,
+        }),
       }),
     );
     expect(result.priceAlert.status).toBe(PriceAlertStatus.paused);

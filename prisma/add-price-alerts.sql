@@ -17,6 +17,15 @@ BEGIN
       'cancelled'
     );
   END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'PriceAlertFrequency') THEN
+    CREATE TYPE "PriceAlertFrequency" AS ENUM (
+      'one_time',
+      'once_per_day',
+      'once_per_week',
+      'every_price_change'
+    );
+  END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS price_alerts (
@@ -27,6 +36,7 @@ CREATE TABLE IF NOT EXISTS price_alerts (
   currency TEXT NOT NULL DEFAULT 'NGN',
   unit "PriceUnit" NOT NULL,
   condition "PriceAlertCondition" NOT NULL DEFAULT 'at_or_below',
+  frequency "PriceAlertFrequency" NOT NULL DEFAULT 'one_time',
   status "PriceAlertStatus" NOT NULL DEFAULT 'active',
   last_triggered_at TIMESTAMP(3),
   triggered_price DECIMAL(12, 2),
@@ -43,3 +53,6 @@ CREATE INDEX IF NOT EXISTS price_alerts_status_idx
   ON price_alerts(status);
 CREATE INDEX IF NOT EXISTS price_alerts_product_unit_status_idx
   ON price_alerts(product_id, unit, status);
+
+ALTER TABLE price_alerts
+  ADD COLUMN IF NOT EXISTS frequency "PriceAlertFrequency" NOT NULL DEFAULT 'one_time';

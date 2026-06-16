@@ -15,6 +15,7 @@ import { ClientIpThrottlerGuard } from './common/guards/client-ip-throttler.guar
 import { LogisticsModule } from './logistics/logistics.module';
 import { MarketPricesModule } from './market-prices/market-prices.module';
 import { MarketsModule } from './markets/markets.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PriceAlertsModule } from './price-alerts/price-alerts.module';
@@ -67,6 +68,7 @@ import { WishlistsModule } from './wishlists/wishlists.module';
     PricesModule,
     PaymentsModule,
     PriceAlertsModule,
+    NotificationsModule,
     UsersModule,
     AccessControlModule,
     AddressesModule,

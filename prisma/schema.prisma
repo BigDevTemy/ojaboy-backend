@@ -29,6 +29,8 @@ model User {
   orderFeedbacks      OrderFeedback[]
   wishlists           Wishlist[]
   priceAlerts         PriceAlert[]
+  notifications       Notification[]       @relation("NotificationRecipient")
+  triggeredNotifications Notification[]    @relation("NotificationActor")
 
   @@map("users")
 }
@@ -350,6 +352,42 @@ enum PriceAlertStatus {
   cancelled
 }
 
+enum PriceAlertFrequency {
+  one_time
+  once_per_day
+  once_per_week
+  every_price_change
+}
+
+enum NotificationSource {
+  order
+  price_alert
+  admin
+  payment
+  system
+}
+
+enum NotificationChannel {
+  in_app
+  email
+  sms
+  push
+}
+
+enum NotificationStatus {
+  pending
+  sent
+  delivered
+  failed
+}
+
+enum NotificationPriority {
+  low
+  normal
+  high
+  urgent
+}
+
 model Product {
   id           String           @id @default(uuid())
   name         String
@@ -370,6 +408,46 @@ model Product {
   @@map("products")
 }
 
+model Notification {
+  id            String               @id @default(uuid())
+  userId        String               @map("user_id")
+  actorUserId   String?              @map("actor_user_id")
+  title         String
+  body          String
+  source        NotificationSource
+  event         String?              
+  channel       NotificationChannel  @default(in_app)
+  status        NotificationStatus   @default(sent)
+  priority      NotificationPriority @default(normal)
+  readAt        DateTime?            @map("read_at")
+  sentAt        DateTime?            @default(now()) @map("sent_at")
+  deliveredAt   DateTime?            @map("delivered_at")
+  failedAt      DateTime?            @map("failed_at")
+  failureReason String?              @map("failure_reason")
+  orderId       String?              @map("order_id")
+  priceAlertId  String?              @map("price_alert_id")
+  paymentId     String?              @map("payment_id")
+  metadata      Json?
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+  user          User                 @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actor         User?                @relation("NotificationActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  order         Order?               @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  priceAlert    PriceAlert?          @relation(fields: [priceAlertId], references: [id], onDelete: SetNull)
+  payment       Payment?             @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([actorUserId])
+  @@index([source])
+  @@index([channel])
+  @@index([status])
+  @@index([readAt])
+  @@index([orderId])
+  @@index([priceAlertId])
+  @@index([paymentId])
+  @@map("notifications")
+}
+
 model PriceAlert {
   id              String              @id @default(uuid())
   userId          String              @map("user_id")
@@ -378,6 +456,7 @@ model PriceAlert {
   currency        String              @default("NGN")
   unit            PriceUnit
   condition       PriceAlertCondition @default(at_or_below)
+  frequency       PriceAlertFrequency @default(one_time)
   status          PriceAlertStatus    @default(active)
   lastTriggeredAt DateTime?           @map("last_triggered_at")
   triggeredPrice  Decimal?            @map("triggered_price") @db.Decimal(12, 2)
@@ -386,6 +465,7 @@ model PriceAlert {
   updatedAt       DateTime            @updatedAt @map("updated_at")
   user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   product         Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  notifications   Notification[]
 
   @@index([userId])
   @@index([productId])
@@ -604,6 +684,7 @@ model Order {
   items                OrderItem[]
   payments             Payment[]
   wishlist             Wishlist?
+  notifications        Notification[]
 
   @@index([userId])
   @@index([deliveryAddressId])
@@ -718,6 +799,7 @@ model Payment {
   updatedAt         DateTime        @updatedAt @map("updated_at")
   user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   order             Order?          @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  notifications     Notification[]
 
   @@index([userId])
   @@index([orderId])

@@ -35,6 +35,7 @@ export class PriceAlertsService {
         currency: dto.currency?.trim() || 'NGN',
         unit: dto.unit,
         condition: dto.condition,
+        frequency: dto.frequency,
       },
       include: this.priceAlertInclude(),
     });
@@ -90,6 +91,7 @@ export class PriceAlertsService {
         currency: dto.currency?.trim(),
         unit: dto.unit,
         condition: dto.condition,
+        frequency: dto.frequency,
         status: dto.status,
       },
       include: this.priceAlertInclude(),

@@ -12,6 +12,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   CouponDiscountType,
+  NotificationPriority,
+  NotificationSource,
   OrderFeedback,
   OrderStatus,
   PaymentProvider,
@@ -31,12 +33,15 @@ import {
 } from '../addresses/dto/address-details.dto';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { EmailService } from '../mail/email.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PaymentsService } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderFeedbackDto } from './dto/create-order-feedback.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { OrderListQueryDto } from './dto/order-list-query.dto';
 import { OrderPaginationQueryDto } from './dto/order-pagination-query.dto';
 import { QuoteOrderDto } from './dto/quote-order.dto';
+import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrderQuoteNormalizerService } from './order-quote-normalizer.service';
 
 type PreparedOrderItem = {
@@ -90,6 +95,14 @@ type QuoteCustomer = Pick<User, 'id' | 'email'>;
 
 type DatabaseClient = Prisma.TransactionClient | PrismaService;
 
+type NotifiableOrder = {
+  id: string;
+  userId: string;
+  status: OrderStatus;
+  paymentStatus: string;
+  total: Prisma.Decimal | number;
+};
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -101,20 +114,54 @@ export class OrdersService {
     private readonly addressesService: AddressesService,
     private readonly paymentsService: PaymentsService,
     private readonly orderQuoteNormalizer: OrderQuoteNormalizerService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
-  async findAll() {
-    const orders = await this.prisma.order.findMany({
-      include: this.orderInclude(),
-      orderBy: { createdAt: 'desc' },
-    });
+  async findAll(query: OrderListQueryDto = new OrderListQueryDto()) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 50;
+    const where = this.toOrderListWhere(query);
+    const [orders, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        where,
+        include: this.orderInclude(),
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
 
-    return { data: orders };
+    return {
+      data: orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 
   async findOne(id: string) {
     const order = await this.prisma.order.findUnique({
       where: { id },
+      include: this.orderInclude(),
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    return { order };
+  }
+
+  async findOneForUser(user: AuthUser, id: string) {
+    const order = await this.prisma.order.findFirst({
+      where: {
+        id,
+        userId: this.isAdmin(user) ? undefined : user.id,
+      },
       include: this.orderInclude(),
     });
 
@@ -280,6 +327,43 @@ export class OrdersService {
     return {
       message: 'Order feedback submitted successfully.',
       feedback,
+    };
+  }
+
+  async updateStatus(
+    actor: AuthUser,
+    orderId: string,
+    dto: UpdateOrderStatusDto,
+  ) {
+    this.assertAdmin(actor);
+
+    const existing = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: this.orderInclude(),
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (existing.status === dto.status) {
+      return {
+        message: 'Order status is already up to date.',
+        order: existing,
+      };
+    }
+
+    const order = await this.prisma.order.update({
+      where: { id: orderId },
+      data: { status: dto.status },
+      include: this.orderInclude(),
+    });
+
+    await this.createOrderStatusNotification(order, existing.status, actor.id);
+
+    return {
+      message: 'Order status updated successfully.',
+      order,
     };
   }
 
@@ -628,6 +712,8 @@ export class OrdersService {
     const paymentInitialization =
       await this.paymentsService.initializePaymentAttempt(payment.id);
 
+    await this.createOrderCreatedNotification(order);
+
     try {
       await this.emailService.sendTemplateEmail({
         to: order.user.email,
@@ -695,6 +781,65 @@ export class OrdersService {
 
   retryPayment(orderId: string, email: string) {
     return this.paymentsService.retryOrderPayment(orderId, email);
+  }
+
+  private async createOrderCreatedNotification(order: NotifiableOrder) {
+    try {
+      await this.notificationsService.createNotification({
+        userId: order.userId,
+        title: 'Order created',
+        body: `Your order ${order.id} has been received and is awaiting processing.`,
+        source: NotificationSource.order,
+        event: 'order_created',
+        priority: NotificationPriority.normal,
+        orderId: order.id,
+        metadata: {
+          orderId: order.id,
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+          total: this.toNumber(order.total),
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Order ${order.id} was created, but its notification could not be saved`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private async createOrderStatusNotification(
+    order: NotifiableOrder,
+    previousStatus: OrderStatus,
+    actorUserId?: string,
+  ) {
+    try {
+      await this.notificationsService.createNotification(
+        {
+          userId: order.userId,
+          title: 'Order status updated',
+          body: `Your order ${order.id} is now ${this.displayOrderStatus(order.status)}.`,
+          source: NotificationSource.order,
+          event: 'order_status_changed',
+          priority:
+            order.status === OrderStatus.cancelled
+              ? NotificationPriority.high
+              : NotificationPriority.normal,
+          orderId: order.id,
+          metadata: {
+            orderId: order.id,
+            oldStatus: previousStatus,
+            newStatus: order.status,
+          },
+        },
+        { actorUserId, source: NotificationSource.order },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Order ${order.id} status changed, but its notification could not be saved`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   private async calculateQuote(
@@ -1148,6 +1293,35 @@ export class OrdersService {
     return user;
   }
 
+  private toOrderListWhere(query: OrderListQueryDto): Prisma.OrderWhereInput {
+    const createdAt =
+      query.from || query.to
+        ? {
+            gte: query.from
+              ? this.parseOrderDateBoundary(query.from, 'start')
+              : undefined,
+            lte: query.to ? this.parseOrderDateBoundary(query.to, 'end') : undefined,
+          }
+        : undefined;
+
+    return {
+      status: query.status,
+      paymentStatus: query.paymentStatus,
+      userId: query.userId,
+      createdAt,
+    };
+  }
+
+  private parseOrderDateBoundary(value: string, boundary: 'start' | 'end') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return new Date(
+        `${value}T${boundary === 'start' ? '00:00:00.000' : '23:59:59.999'}Z`,
+      );
+    }
+
+    return new Date(value);
+  }
+
   private orderInclude() {
     return {
       user: {
@@ -1177,6 +1351,16 @@ export class OrdersService {
     } satisfies Prisma.OrderInclude;
   }
 
+  private assertAdmin(user: AuthUser) {
+    if (!this.isAdmin(user)) {
+      throw new UnauthorizedException('Only admins can update order status');
+    }
+  }
+
+  private isAdmin(user: AuthUser) {
+    return ['admin', 'superadmin'].includes(user.role);
+  }
+
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
   }
@@ -1194,5 +1378,9 @@ export class OrdersService {
       style: 'currency',
       currency,
     }).format(value);
+  }
+
+  private displayOrderStatus(status: OrderStatus): string {
+    return status.replace(/_/g, ' ');
   }
 }

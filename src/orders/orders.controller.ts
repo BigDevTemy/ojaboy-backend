@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -14,9 +15,11 @@ import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { InternalApiTokenGuard } from '../common/guards/internal-api-token.guard';
 import { CreateOrderFeedbackDto } from './dto/create-order-feedback.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { OrderListQueryDto } from './dto/order-list-query.dto';
 import { OrderPaginationQueryDto } from './dto/order-pagination-query.dto';
 import { QuoteOrderDto } from './dto/quote-order.dto';
 import { RetryOrderPaymentDto } from './dto/retry-order-payment.dto';
+import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersService } from './orders.service';
 
 @Controller('orders')
@@ -24,8 +27,8 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Get()
-  findAll() {
-    return this.ordersService.findAll();
+  findAll(@Query() query: OrderListQueryDto) {
+    return this.ordersService.findAll(query);
   }
 
   @Get('stats')
@@ -65,9 +68,19 @@ export class OrdersController {
   }
 
   @Get(':id')
-  @UseGuards(InternalApiTokenGuard)
-  findOne(@Param('id') id: string) {
-    return this.ordersService.findOne(id);
+  @UseGuards(JwtAuthGuard)
+  findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ordersService.findOneForUser(user, id);
+  }
+
+  @Patch(':id/status')
+  @UseGuards(JwtAuthGuard)
+  updateStatus(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateOrderStatusDto,
+  ) {
+    return this.ordersService.updateStatus(user, id, dto);
   }
 
   @Post()

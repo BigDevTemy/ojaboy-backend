@@ -1,5 +1,6 @@
 import {
   PriceAlertCondition,
+  PriceAlertFrequency,
   PriceAlertStatus,
   PriceUnit,
 } from '@prisma/client';
@@ -33,6 +34,10 @@ export class UpdatePriceAlertDto {
   @IsOptional()
   @IsEnum(PriceAlertCondition)
   condition?: PriceAlertCondition;
+
+  @IsOptional()
+  @IsEnum(PriceAlertFrequency)
+  frequency?: PriceAlertFrequency;
 
   @IsOptional()
   @IsEnum(PriceAlertStatus)

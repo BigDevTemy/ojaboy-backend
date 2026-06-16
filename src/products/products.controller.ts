@@ -7,7 +7,12 @@ import {
   Patch,
   Post,
   Query,
+  Res,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { ProductCategory } from '@prisma/client';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
@@ -21,6 +26,27 @@ export class ProductsController {
   @Post()
   create(@Body() createProductDto: CreateProductDto) {
     return this.productsService.create(createProductDto);
+  }
+
+  @Post('bulk-upload')
+  @UseInterceptors(FileInterceptor('file'))
+  bulkUpload(@UploadedFile() file?: Express.Multer.File) {
+    return this.productsService.bulkUpload(file);
+  }
+
+  @Get('bulk-upload/template')
+  downloadBulkUploadTemplate(@Res() response: Response) {
+    const template = this.productsService.createBulkUploadTemplate();
+
+    response.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    response.setHeader(
+      'Content-Disposition',
+      'attachment; filename="product-bulk-upload-template.xlsx"',
+    );
+    response.send(template);
   }
 
   @Get()

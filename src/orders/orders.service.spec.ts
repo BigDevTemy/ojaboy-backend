@@ -1,5 +1,10 @@
 import { ConfigService } from '@nestjs/config';
-import { OrderStatus, PaymentStatus } from '@prisma/client';
+import {
+  NotificationSource,
+  OrderPaymentStatus,
+  OrderStatus,
+  PaymentStatus,
+} from '@prisma/client';
 import { OrdersService } from './orders.service';
 
 describe('OrdersService order authentication', () => {
@@ -8,6 +13,7 @@ describe('OrdersService order authentication', () => {
       {} as ConfigService,
       {} as never,
       prisma as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -90,6 +96,81 @@ describe('OrdersService order authentication', () => {
     );
   });
 
+  it('filters and paginates all orders by order and payment status', async () => {
+    const findMany = jest.fn().mockReturnValue([]);
+    const count = jest.fn().mockReturnValue(0);
+    const prisma = {
+      order: { findMany, count },
+      $transaction: jest.fn((queries: unknown[]) => Promise.resolve(queries)),
+    };
+    const service = createService(prisma);
+
+    await expect(
+      service.findAll({
+        page: 1,
+        limit: 50,
+        status: OrderStatus.pending,
+        paymentStatus: OrderPaymentStatus.pending,
+      }),
+    ).resolves.toEqual({
+      data: [],
+      pagination: {
+        page: 1,
+        limit: 50,
+        total: 0,
+        totalPages: 0,
+      },
+    });
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: OrderStatus.pending,
+          paymentStatus: OrderPaymentStatus.pending,
+          userId: undefined,
+          createdAt: undefined,
+        },
+        skip: 0,
+        take: 50,
+      }),
+    );
+    expect(count).toHaveBeenCalledWith({
+      where: {
+        status: OrderStatus.pending,
+        paymentStatus: OrderPaymentStatus.pending,
+        userId: undefined,
+        createdAt: undefined,
+      },
+    });
+  });
+
+  it('treats date-only order list ranges as full UTC days', async () => {
+    const findMany = jest.fn().mockReturnValue([]);
+    const count = jest.fn().mockReturnValue(0);
+    const prisma = {
+      order: { findMany, count },
+      $transaction: jest.fn((queries: unknown[]) => Promise.resolve(queries)),
+    };
+    const service = createService(prisma);
+
+    await service.findAll({
+      page: 1,
+      limit: 50,
+      from: '2026-06-15',
+      to: '2026-06-15',
+    });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          createdAt: {
+            gte: new Date('2026-06-15T00:00:00.000Z'),
+            lte: new Date('2026-06-15T23:59:59.999Z'),
+          },
+        }),
+      }),
+    );
+  });
+
   it('paginates user orders with a default limit of 50', async () => {
     const findMany = jest.fn().mockReturnValue([]);
     const count = jest.fn().mockReturnValue(75);
@@ -165,6 +246,56 @@ describe('OrdersService order authentication', () => {
     ).rejects.toThrow('Order not found');
   });
 
+  it('returns an order by id for the authenticated owner', async () => {
+    const order = { id: 'order-id', userId: 'user-id' };
+    const findFirst = jest.fn().mockResolvedValue(order);
+    const service = createService({ order: { findFirst } });
+
+    await expect(
+      service.findOneForUser(
+        {
+          id: 'user-id',
+          email: 'customer@example.com',
+          fullName: 'Customer',
+          role: 'user',
+          authProviders: ['password'],
+          emailVerified: true,
+        },
+        'order-id',
+      ),
+    ).resolves.toEqual({ order });
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'order-id', userId: 'user-id' },
+      }),
+    );
+  });
+
+  it('allows admins to fetch an order by id without ownership filtering', async () => {
+    const order = { id: 'order-id', userId: 'user-id' };
+    const findFirst = jest.fn().mockResolvedValue(order);
+    const service = createService({ order: { findFirst } });
+
+    await expect(
+      service.findOneForUser(
+        {
+          id: 'admin-id',
+          email: 'admin@example.com',
+          fullName: 'Admin',
+          role: 'admin',
+          authProviders: ['password'],
+          emailVerified: true,
+        },
+        'order-id',
+      ),
+    ).resolves.toEqual({ order });
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'order-id', userId: undefined },
+      }),
+    );
+  });
+
   it('rejects feedback for an order that is not delivered', async () => {
     const service = createService({
       order: {
@@ -214,5 +345,72 @@ describe('OrdersService order authentication', () => {
         comment: 'Excellent delivery',
       },
     });
+  });
+
+  it('updates an order status and creates an order notification', async () => {
+    const existingOrder = {
+      id: 'order-id',
+      userId: 'user-id',
+      status: OrderStatus.confirmed,
+      paymentStatus: 'pending',
+      total: 5000,
+    };
+    const updatedOrder = {
+      ...existingOrder,
+      status: OrderStatus.processing,
+    };
+    const update = jest.fn().mockResolvedValue(updatedOrder);
+    const createNotification = jest.fn().mockResolvedValue({
+      id: 'notification-id',
+    });
+    const service = new OrdersService(
+      {} as ConfigService,
+      {} as never,
+      {
+        order: {
+          findUnique: jest.fn().mockResolvedValue(existingOrder),
+          update,
+        },
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { createNotification } as never,
+    );
+
+    const result = await service.updateStatus(
+      {
+        id: 'admin-id',
+        email: 'admin@example.com',
+        fullName: 'Admin',
+        role: 'admin',
+        authProviders: ['password'],
+        emailVerified: true,
+      },
+      'order-id',
+      { status: OrderStatus.processing },
+    );
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'order-id' },
+        data: { status: OrderStatus.processing },
+      }),
+    );
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-id',
+        source: NotificationSource.order,
+        event: 'order_status_changed',
+        orderId: 'order-id',
+        metadata: {
+          orderId: 'order-id',
+          oldStatus: OrderStatus.confirmed,
+          newStatus: OrderStatus.processing,
+        },
+      }),
+      { actorUserId: 'admin-id', source: NotificationSource.order },
+    );
+    expect(result.message).toBe('Order status updated successfully.');
   });
 });
