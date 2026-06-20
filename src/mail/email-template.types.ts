@@ -1,6 +1,8 @@
 export type EmailTemplateName =
   | 'email-verification'
   | 'password-setup'
+  | 'password-reset'
+  | 'paystack-bank-transfer'
   | 'order-status'
   | 'order-otp'
   | 'welcome-note';

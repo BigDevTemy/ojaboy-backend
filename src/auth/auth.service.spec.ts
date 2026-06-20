@@ -246,6 +246,101 @@ describe('AuthService order OTP verification', () => {
     });
   });
 
+  it('sends a password reset link for a registered user', async () => {
+    const user = {
+      id: 'user-id',
+      email: 'customer@example.com',
+      fullName: 'Test Customer',
+      passwordHash: 'password-hash',
+      authProviders: ['password'],
+      role: 'user',
+      emailVerifiedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const sendTemplateEmail = jest.fn().mockResolvedValue(undefined);
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue(user),
+      },
+      passwordSetupToken: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const configService = {
+      get: jest.fn((key: string) =>
+        key === 'FRONTEND_URL' ? 'https://app.ojaboy.com' : undefined,
+      ),
+    } as unknown as ConfigService;
+    const service = new AuthService(
+      configService,
+      {} as JwtService,
+      { sendTemplateEmail } as never,
+      prisma as never,
+    );
+
+    const response = await service.forgetPassword({
+      email: ' Customer@Example.com ',
+    });
+
+    expect(response).toEqual({
+      message: 'A password reset link has been sent to your email.',
+      email: user.email,
+    });
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { email: user.email },
+    });
+    expect(prisma.passwordSetupToken.deleteMany).toHaveBeenCalledWith({
+      where: { userId: user.id },
+    });
+    expect(prisma.passwordSetupToken.create).toHaveBeenCalledWith({
+      data: {
+        userId: user.id,
+        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        expiresAt: expect.any(Date),
+      },
+    });
+    expect(sendTemplateEmail).toHaveBeenCalledWith({
+      to: user.email,
+      template: 'password-reset',
+      variables: {
+        fullName: user.fullName,
+        resetLink: expect.stringMatching(
+          /^https:\/\/app\.ojaboy\.com\/reset-password\?token=[a-f0-9]{64}$/,
+        ),
+        expiresIn: '1 hour',
+        supportEmail: 'support@ojaboy.com',
+      },
+    });
+  });
+
+  it('does not send a password reset link for an unregistered email', async () => {
+    const sendTemplateEmail = jest.fn();
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      passwordSetupToken: {
+        deleteMany: jest.fn(),
+        create: jest.fn(),
+      },
+    };
+    const service = new AuthService(
+      {} as ConfigService,
+      {} as JwtService,
+      { sendTemplateEmail } as never,
+      prisma as never,
+    );
+
+    await expect(
+      service.forgetPassword({ email: 'missing@example.com' }),
+    ).rejects.toThrow('User not found');
+    expect(prisma.passwordSetupToken.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.passwordSetupToken.create).not.toHaveBeenCalled();
+    expect(sendTemplateEmail).not.toHaveBeenCalled();
+  });
+
   it('verifies an email and creates an authenticated session', async () => {
     const user = {
       id: 'user-id',

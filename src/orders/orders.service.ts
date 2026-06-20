@@ -37,6 +37,7 @@ import { EmailService } from '../mail/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PaymentsService } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { BulkUpdateOrderStatusDto } from './dto/bulk-update-order-status.dto';
 import { CreateOrderFeedbackDto } from './dto/create-order-feedback.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderListQueryDto } from './dto/order-list-query.dto';
@@ -459,10 +460,83 @@ export class OrdersService {
     });
 
     await this.createOrderStatusNotification(order, existing.status, actor.id);
+    await this.sendOrderStatusEmail(
+      order,
+      `Your order status has been updated to ${this.formatOrderStatusLabel(
+        order.status,
+      )}.`,
+    );
 
     return {
       message: 'Order status updated successfully.',
       order,
+    };
+  }
+
+  async bulkUpdateStatus(actor: AuthUser, dto: BulkUpdateOrderStatusDto) {
+    this.assertAdmin(actor);
+
+    const uniqueOrderIds = [...new Set(dto.orderIds)];
+    const existingOrders = await this.prisma.order.findMany({
+      where: { id: { in: uniqueOrderIds } },
+      include: this.orderInclude(),
+    });
+    const existingOrderIds = new Set(existingOrders.map((order) => order.id));
+    const missingOrderIds = uniqueOrderIds.filter(
+      (orderId) => !existingOrderIds.has(orderId),
+    );
+    const unchangedOrders = existingOrders.filter(
+      (order) => order.status === dto.status,
+    );
+    const ordersToUpdate = existingOrders.filter(
+      (order) => order.status !== dto.status,
+    );
+
+    const updatedOrders = ordersToUpdate.length
+      ? await this.prisma.$transaction(
+          ordersToUpdate.map((order) =>
+            this.prisma.order.update({
+              where: { id: order.id },
+              data: { status: dto.status },
+              include: this.orderInclude(),
+            }),
+          ),
+        )
+      : [];
+
+    await Promise.all(
+      updatedOrders.map(async (order) => {
+        const previousOrder = ordersToUpdate.find(
+          (existingOrder) => existingOrder.id === order.id,
+        );
+
+        await this.createOrderStatusNotification(
+          order,
+          previousOrder?.status ?? dto.status,
+          actor.id,
+        );
+        await this.sendOrderStatusEmail(
+          order,
+          `Your order status has been updated to ${this.formatOrderStatusLabel(
+            order.status,
+          )}.`,
+        );
+      }),
+    );
+
+    return {
+      message: 'Bulk order status update completed.',
+      status: dto.status,
+      summary: {
+        requested: uniqueOrderIds.length,
+        updated: updatedOrders.length,
+        unchanged: unchangedOrders.length,
+        notFound: missingOrderIds.length,
+      },
+      updatedOrderIds: updatedOrders.map((order) => order.id),
+      unchangedOrderIds: unchangedOrders.map((order) => order.id),
+      notFoundOrderIds: missingOrderIds,
+      orders: updatedOrders,
     };
   }
 
@@ -936,6 +1010,59 @@ export class OrdersService {
     } catch (error) {
       this.logger.error(
         `Order ${order.id} status changed, but its notification could not be saved`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  private async sendOrderStatusEmail(
+    order: OrderWithExportRelations,
+    orderMessage: string,
+  ) {
+    try {
+      const currency = order.items[0]?.buyPrice?.currency ?? 'NGN';
+
+      await this.emailService.sendTemplateEmail({
+        to: order.user.email,
+        template: 'order-status',
+        variables: {
+          fullName: order.user.fullName,
+          orderNumber: order.id,
+          orderStatus: order.status,
+          orderMessage,
+          orderItems: order.items.map((item) => ({
+            productName: item.product.name,
+            quantity: this.toNumber(item.quantity).toString(),
+            unit: item.unit.replace(/_/g, ' '),
+            unitPrice: this.formatMoney(
+              this.toNumber(item.unitPrice),
+              currency,
+            ),
+            totalPrice: this.formatMoney(
+              this.toNumber(item.totalPrice),
+              currency,
+            ),
+          })),
+          subtotal: this.formatMoney(this.toNumber(order.subtotal), currency),
+          serviceFee: this.formatMoney(
+            this.toNumber(order.serviceFee),
+            currency,
+          ),
+          discountAmount:
+            this.toNumber(order.discountAmount) > 0
+              ? this.formatMoney(this.toNumber(order.discountAmount), currency)
+              : '',
+          deliveryFee: this.formatMoney(
+            this.toNumber(order.deliveryFee),
+            currency,
+          ),
+          total: this.formatMoney(this.toNumber(order.total), currency),
+          note: order.note ?? '',
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Order ${order.id} status changed, but its status email could not be sent`,
         error instanceof Error ? error.stack : String(error),
       );
     }
@@ -1567,5 +1694,18 @@ export class OrdersService {
 
   private displayOrderStatus(status: OrderStatus): string {
     return status.replace(/_/g, ' ');
+  }
+
+  private formatOrderStatusLabel(status: OrderStatus): string {
+    return this.displayOrderStatus(status)
+      .split(' ')
+      .map((word, index) => {
+        if (index > 0 && ['for', 'of', 'to'].includes(word)) {
+          return word;
+        }
+
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .join(' ');
   }
 }

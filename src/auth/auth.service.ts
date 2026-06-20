@@ -5,6 +5,7 @@ import {
   InternalServerErrorException,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -258,12 +259,17 @@ export class AuthService {
   }
 
   async forgetPassword(forgetPasswordDto: ForgetPasswordDto) {
-    const email = forgetPasswordDto.email.toLowerCase();
-    await this.findStoredUserByEmail(email);
+    const email = forgetPasswordDto.email.toLowerCase().trim();
+    const user = await this.findStoredUserByEmail(email);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.sendPasswordReset(user);
 
     return {
-      message:
-        'If an account exists for this email, a password reset instruction will be sent.',
+      message: 'A password reset link has been sent to your email.',
       email,
     };
   }
@@ -610,6 +616,33 @@ export class AuthService {
     });
   }
 
+  private async sendPasswordReset(user: User) {
+    await this.prisma.passwordSetupToken.deleteMany({
+      where: { userId: user.id },
+    });
+
+    const token = randomBytes(32).toString('hex');
+
+    await this.prisma.passwordSetupToken.create({
+      data: {
+        userId: user.id,
+        tokenHash: this.hashToken(token),
+        expiresAt: new Date(Date.now() + PASSWORD_SETUP_TOKEN_TTL_MS),
+      },
+    });
+
+    await this.emailService.sendTemplateEmail({
+      to: user.email,
+      template: 'password-reset',
+      variables: {
+        fullName: user.fullName,
+        resetLink: this.buildPasswordResetLink(token),
+        expiresIn: '1 hour',
+        supportEmail: 'support@ojaboy.com',
+      },
+    });
+  }
+
   private async sendEmailVerification(user: User) {
     await this.prisma.emailVerificationToken.deleteMany({
       where: { userId: user.id },
@@ -673,6 +706,15 @@ export class AuthService {
       'http://localhost:3000';
 
     return `${frontendUrl}/set-password?token=${token}`;
+  }
+
+  private buildPasswordResetLink(token: string): string {
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') ??
+      this.configService.get<string>('CORS_ORIGIN') ??
+      'http://localhost:3000';
+
+    return `${frontendUrl}/reset-password?token=${token}`;
   }
 
   private hashToken(token: string): string {

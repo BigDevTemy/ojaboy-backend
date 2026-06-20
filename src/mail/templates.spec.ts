@@ -21,3 +21,76 @@ describe('email verification template', () => {
     expect(rendered.text).toContain('This link expires in 1 hour.');
   });
 });
+
+describe('password reset template', () => {
+  it('renders the reset call to action and fallback link', () => {
+    const resetLink = 'https://app.ojaboy.com/reset-password?token=test-token';
+    const rendered = renderEmailTemplate('password-reset', {
+      fullName: 'Test Customer',
+      resetLink,
+      expiresIn: '1 hour',
+      supportEmail: 'support@ojaboy.com',
+    });
+
+    expect(rendered.subject).toBe('Reset your Ojaboy password');
+    expect(rendered.html).toContain('Reset Password');
+    expect(rendered.html).toContain(resetLink);
+    expect(rendered.text).toContain(`Reset your password here: ${resetLink}`);
+    expect(rendered.text).toContain('This link expires in 1 hour.');
+  });
+});
+
+describe('order status template', () => {
+  it('normalizes enum statuses and highlights the latest status', () => {
+    const rendered = renderEmailTemplate('order-status', {
+      fullName: 'Test Customer',
+      orderNumber: 'order-123',
+      orderStatus: 'out_for_delivery',
+      orderMessage: 'Your order status has been updated.',
+      orderItems: [
+        {
+          productName: 'Tomatoes',
+          quantity: '2',
+          unit: 'kg',
+          unitPrice: 'NGN 1,000.00',
+          totalPrice: 'NGN 2,000.00',
+        },
+      ],
+      subtotal: 'NGN 2,000.00',
+      serviceFee: 'NGN 100.00',
+      discountAmount: '',
+      deliveryFee: 'NGN 500.00',
+      total: 'NGN 2,600.00',
+      note: '',
+    });
+
+    expect(rendered.subject).toBe('Your order is Out for Delivery');
+    expect(rendered.html).toContain('Order Status Updated');
+    expect(rendered.html).toContain('Current Status');
+    expect(rendered.html).toContain('Out for Delivery');
+    expect(rendered.html).not.toContain('out_for_delivery');
+    expect(rendered.text).toContain('Status: Out for Delivery');
+  });
+});
+
+describe('paystack bank transfer template', () => {
+  it('renders the generated account details prominently', () => {
+    const rendered = renderEmailTemplate('paystack-bank-transfer', {
+      fullName: 'Test Customer',
+      orderNumber: 'order-123',
+      accountName: 'PAYSTACK-TITAN',
+      accountNumber: '1234567890',
+      bankName: 'Titan Bank',
+      amount: '₦50,000.00',
+      expiresAt: 'Jun 20, 2026, 2:15 PM',
+      supportEmail: 'support@ojaboy.com',
+    });
+
+    expect(rendered.subject).toBe('Payment details for order order-123');
+    expect(rendered.html).toContain('Complete Your Payment');
+    expect(rendered.html).toContain('1234567890');
+    expect(rendered.html).toContain('Titan Bank');
+    expect(rendered.html).toContain('₦50,000.00');
+    expect(rendered.text).toContain('Account number: 1234567890');
+  });
+});

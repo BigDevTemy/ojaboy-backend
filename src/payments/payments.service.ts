@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { OrderPaymentStatus, PaymentStatus, Prisma } from '@prisma/client';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { EmailService } from '../mail/email.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateChargeDto } from './dto/create-charge.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -27,11 +28,26 @@ type PaymentInitializationResult = {
   message?: string;
 };
 
+type PaystackBankTransferDetails = {
+  accountName?: string;
+  accountNumber: string;
+  bankName?: string;
+  bankCode?: string;
+  accountExpiresAt?: Date;
+  rawProviderData: Record<string, unknown>;
+};
+
+type BankTransferEmailRecipient = {
+  email: string;
+  fullName?: string | null;
+};
+
 @Injectable()
 export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly emailService: EmailService,
   ) {}
 
   async charge(dto: CreateChargeDto) {
@@ -109,6 +125,14 @@ export class PaymentsService {
         currency: payment.currency,
         reference: payment.providerReference,
       });
+      const savedBankDetails = await this.savePaystackBankTransferAccount(
+        payment,
+        charge,
+      );
+      await this.sendNewBankTransferDetailsEmail(
+        savedBankDetails,
+        payment.user,
+      );
 
       await this.prisma.payment.update({
         where: { id: payment.id },
@@ -194,7 +218,10 @@ export class PaymentsService {
         };
       }
 
-      const reconciliation = await this.reconcilePaymentAttempt(latestPayment);
+      const reconciliation = await this.reconcilePaymentAttempt(latestPayment, {
+        email: order.user.email,
+        fullName: order.user.fullName,
+      });
 
       if (reconciliation) {
         return reconciliation;
@@ -222,14 +249,18 @@ export class PaymentsService {
     return this.initializePaymentAttempt(retryAttempt.payment.id);
   }
 
-  private async reconcilePaymentAttempt(payment: {
-    id: string;
-    orderId: string | null;
-    providerReference: string | null;
-    amount: Prisma.Decimal;
-    currency: string;
-    status: PaymentStatus;
-  }): Promise<PaymentInitializationResult | null> {
+  private async reconcilePaymentAttempt(
+    payment: {
+      id: string;
+      orderId: string | null;
+      userId: string;
+      providerReference: string | null;
+      amount: Prisma.Decimal;
+      currency: string;
+      status: PaymentStatus;
+    },
+    recipient: BankTransferEmailRecipient,
+  ): Promise<PaymentInitializationResult | null> {
     if (!payment.providerReference || !payment.orderId) {
       return null;
     }
@@ -261,6 +292,11 @@ export class PaymentsService {
     const status = typeof data.status === 'string' ? data.status : '';
 
     if (status === 'success') {
+      const savedBankDetails = await this.savePaystackBankTransferAccount(
+        payment,
+        charge,
+      );
+      await this.sendNewBankTransferDetailsEmail(savedBankDetails, recipient);
       await this.markPaymentPaidFromPaystackData(payment, data);
       return {
         reference: payment.providerReference,
@@ -271,6 +307,11 @@ export class PaymentsService {
     }
 
     if (status === 'pending' || status === 'pay_offline') {
+      const savedBankDetails = await this.savePaystackBankTransferAccount(
+        payment,
+        charge,
+      );
+      await this.sendNewBankTransferDetailsEmail(savedBankDetails, recipient);
       await this.prisma.payment.update({
         where: { id: payment.id },
         data: { status: PaymentStatus.pending },
@@ -361,6 +402,7 @@ export class PaymentsService {
     payment: {
       id: string;
       orderId: string | null;
+      userId?: string;
       amount: Prisma.Decimal;
       currency: string;
     },
@@ -397,6 +439,14 @@ export class PaymentsService {
       this.prisma.order.update({
         where: { id: payment.orderId },
         data: { paymentStatus: OrderPaymentStatus.paid },
+      }),
+      this.prisma.paystackBankTransferAccount.updateMany({
+        where: { paymentId: payment.id, orderId: payment.orderId },
+        data: {
+          status: PaymentStatus.successful,
+          paidAt,
+          paidRawProviderData: data as Prisma.InputJsonValue,
+        },
       }),
     ]);
   }
@@ -607,6 +657,14 @@ export class PaymentsService {
           where: { id: payment.orderId },
           data: { paymentStatus: OrderPaymentStatus.paid },
         }),
+        this.prisma.paystackBankTransferAccount.updateMany({
+          where: { paymentId: payment.id, orderId: payment.orderId },
+          data: {
+            status: PaymentStatus.successful,
+            paidAt,
+            paidRawProviderData: eventData as Prisma.InputJsonValue,
+          },
+        }),
       ]);
     }
 
@@ -678,6 +736,225 @@ export class PaymentsService {
     } catch {
       throw new BadGatewayException('Paystack returned an invalid response');
     }
+  }
+
+  private async savePaystackBankTransferAccount(
+    payment: {
+      id: string;
+      orderId: string | null;
+      userId: string;
+      providerReference: string | null;
+      amount: Prisma.Decimal;
+      currency: string;
+    },
+    payload: Record<string, unknown>,
+  ): Promise<
+    | {
+        created: boolean;
+        details: PaystackBankTransferDetails;
+        payment: {
+          id: string;
+          orderId: string;
+          amount: Prisma.Decimal;
+          currency: string;
+        };
+      }
+    | undefined
+  > {
+    if (!payment.orderId || !payment.providerReference) {
+      return;
+    }
+
+    const details = this.extractPaystackBankTransferDetails(payload);
+
+    if (!details) {
+      return;
+    }
+
+    const existing = await this.prisma.paystackBankTransferAccount.findUnique({
+      where: {
+        paymentId_accountNumber: {
+          paymentId: payment.id,
+          accountNumber: details.accountNumber,
+        },
+      },
+    });
+
+    await this.prisma.paystackBankTransferAccount.upsert({
+      where: {
+        paymentId_accountNumber: {
+          paymentId: payment.id,
+          accountNumber: details.accountNumber,
+        },
+      },
+      update: {
+        providerReference: payment.providerReference,
+        accountName: details.accountName,
+        bankName: details.bankName,
+        bankCode: details.bankCode,
+        amount: payment.amount,
+        currency: payment.currency,
+        accountExpiresAt: details.accountExpiresAt,
+        status: PaymentStatus.pending,
+        generatedRawProviderData:
+          details.rawProviderData as Prisma.InputJsonValue,
+      },
+      create: {
+        orderId: payment.orderId,
+        paymentId: payment.id,
+        userId: payment.userId,
+        providerReference: payment.providerReference,
+        accountName: details.accountName,
+        accountNumber: details.accountNumber,
+        bankName: details.bankName,
+        bankCode: details.bankCode,
+        amount: payment.amount,
+        currency: payment.currency,
+        accountExpiresAt: details.accountExpiresAt,
+        status: PaymentStatus.pending,
+        generatedRawProviderData:
+          details.rawProviderData as Prisma.InputJsonValue,
+      },
+    });
+
+    return {
+      created: !existing,
+      details,
+      payment: {
+        id: payment.id,
+        orderId: payment.orderId,
+        amount: payment.amount,
+        currency: payment.currency,
+      },
+    };
+  }
+
+  private async sendNewBankTransferDetailsEmail(
+    savedBankDetails:
+      | {
+          created: boolean;
+          details: PaystackBankTransferDetails;
+          payment: {
+            orderId: string;
+            amount: Prisma.Decimal;
+            currency: string;
+          };
+        }
+      | undefined,
+    recipient: BankTransferEmailRecipient,
+  ): Promise<void> {
+    if (!savedBankDetails?.created) {
+      return;
+    }
+
+    await this.emailService.sendTemplateEmail({
+      to: recipient.email,
+      template: 'paystack-bank-transfer',
+      variables: {
+        fullName: recipient.fullName ?? 'there',
+        orderNumber: savedBankDetails.payment.orderId,
+        accountName: savedBankDetails.details.accountName ?? '',
+        accountNumber: savedBankDetails.details.accountNumber,
+        bankName: savedBankDetails.details.bankName ?? '',
+        amount: this.formatMoney(
+          savedBankDetails.payment.amount.toNumber(),
+          savedBankDetails.payment.currency,
+        ),
+        expiresAt: savedBankDetails.details.accountExpiresAt
+          ? savedBankDetails.details.accountExpiresAt.toLocaleString('en-NG', {
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            })
+          : '',
+        supportEmail: 'support@ojaboy.com',
+      },
+    });
+  }
+
+  private extractPaystackBankTransferDetails(
+    payload: Record<string, unknown>,
+  ): PaystackBankTransferDetails | undefined {
+    const data = this.getChargeResponseData(payload);
+    const bank = this.getOptionalRecord(data, 'bank');
+    const bankTransfer = this.getOptionalRecord(data, 'bank_transfer');
+    const accountNumber =
+      this.getOptionalString(data, 'account_number') ??
+      this.getOptionalString(data, 'accountNumber') ??
+      this.getOptionalString(bankTransfer, 'account_number') ??
+      this.getOptionalString(bankTransfer, 'accountNumber');
+
+    if (!accountNumber) {
+      return undefined;
+    }
+
+    return {
+      accountNumber,
+      accountName:
+        this.getOptionalString(data, 'account_name') ??
+        this.getOptionalString(data, 'accountName') ??
+        this.getOptionalString(bankTransfer, 'account_name') ??
+        this.getOptionalString(bankTransfer, 'accountName'),
+      bankName:
+        this.getOptionalString(data, 'bank_name') ??
+        this.getOptionalString(data, 'bankName') ??
+        this.getOptionalString(bank, 'name') ??
+        this.getOptionalString(bankTransfer, 'bank_name') ??
+        this.getOptionalString(bankTransfer, 'bankName'),
+      bankCode:
+        this.getOptionalString(data, 'bank_code') ??
+        this.getOptionalString(data, 'bankCode') ??
+        this.getOptionalString(bank, 'code') ??
+        this.getOptionalString(bank, 'slug') ??
+        this.getOptionalString(bankTransfer, 'bank_code') ??
+        this.getOptionalString(bankTransfer, 'bankCode'),
+      accountExpiresAt: this.parseOptionalDate(
+        this.getOptionalString(data, 'account_expires_at') ??
+          this.getOptionalString(data, 'accountExpiresAt') ??
+          this.getOptionalString(bankTransfer, 'account_expires_at') ??
+          this.getOptionalString(bankTransfer, 'accountExpiresAt'),
+      ),
+      rawProviderData: data,
+    };
+  }
+
+  private getOptionalRecord(
+    data: Record<string, unknown> | undefined,
+    field: string,
+  ): Record<string, unknown> | undefined {
+    const value = data?.[field];
+
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return undefined;
+    }
+
+    return value as Record<string, unknown>;
+  }
+
+  private getOptionalString(
+    data: Record<string, unknown> | undefined,
+    field: string,
+  ): string | undefined {
+    const value = data?.[field];
+
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  }
+
+  private parseOptionalDate(value?: string): Date | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const date = new Date(value);
+
+    return Number.isNaN(date.getTime()) ? undefined : date;
+  }
+
+  private formatMoney(value: number, currency: string): string {
+    return new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 2,
+    }).format(value);
   }
 
   private verifyPaystackSignature(

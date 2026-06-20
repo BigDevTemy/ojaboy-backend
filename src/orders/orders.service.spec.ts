@@ -499,14 +499,35 @@ describe('OrdersService order authentication', () => {
     const updatedOrder = {
       ...existingOrder,
       status: OrderStatus.processing,
+      user: {
+        id: 'user-id',
+        email: 'customer@example.com',
+        fullName: 'Customer',
+      },
+      items: [
+        {
+          product: { name: 'Tomatoes' },
+          buyPrice: { currency: 'NGN' },
+          quantity: 2,
+          unit: 'kg',
+          unitPrice: 1000,
+          totalPrice: 2000,
+        },
+      ],
+      subtotal: 2000,
+      discountAmount: 0,
+      serviceFee: 100,
+      deliveryFee: 500,
+      note: null,
     };
     const update = jest.fn().mockResolvedValue(updatedOrder);
+    const sendTemplateEmail = jest.fn().mockResolvedValue(undefined);
     const createNotification = jest.fn().mockResolvedValue({
       id: 'notification-id',
     });
     const service = new OrdersService(
       {} as ConfigService,
-      {} as never,
+      { sendTemplateEmail } as never,
       {
         order: {
           findUnique: jest.fn().mockResolvedValue(existingOrder),
@@ -552,6 +573,150 @@ describe('OrdersService order authentication', () => {
       }),
       { actorUserId: 'admin-id', source: NotificationSource.order },
     );
+    expect(sendTemplateEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'customer@example.com',
+        template: 'order-status',
+        variables: expect.objectContaining({
+          orderNumber: 'order-id',
+          orderStatus: OrderStatus.processing,
+          orderMessage: 'Your order status has been updated to Processing.',
+        }),
+      }),
+    );
     expect(result.message).toBe('Order status updated successfully.');
+  });
+
+  it('bulk updates order statuses and reports unchanged and missing orders', async () => {
+    const existingOrders = [
+      {
+        id: 'order-one',
+        userId: 'user-one',
+        status: OrderStatus.confirmed,
+        paymentStatus: 'pending',
+        total: 5000,
+      },
+      {
+        id: 'order-two',
+        userId: 'user-two',
+        status: OrderStatus.processing,
+        paymentStatus: 'pending',
+        total: 3500,
+      },
+    ];
+    const updatedOrder = {
+      ...existingOrders[0],
+      status: OrderStatus.processing,
+      user: {
+        id: 'user-one',
+        email: 'customer@example.com',
+        fullName: 'Customer',
+      },
+      items: [
+        {
+          product: { name: 'Tomatoes' },
+          buyPrice: { currency: 'NGN' },
+          quantity: 2,
+          unit: 'kg',
+          unitPrice: 1000,
+          totalPrice: 2000,
+        },
+      ],
+      subtotal: 2000,
+      discountAmount: 0,
+      serviceFee: 100,
+      deliveryFee: 500,
+      note: null,
+    };
+    const update = jest.fn().mockResolvedValue(updatedOrder);
+    const sendTemplateEmail = jest.fn().mockResolvedValue(undefined);
+    const createNotification = jest.fn().mockResolvedValue({
+      id: 'notification-id',
+    });
+    const prisma = {
+      order: {
+        findMany: jest.fn().mockResolvedValue(existingOrders),
+        update,
+      },
+      $transaction: jest.fn(async (operations: Array<Promise<unknown>>) =>
+        Promise.all(operations),
+      ),
+    };
+    const service = new OrdersService(
+      {} as ConfigService,
+      { sendTemplateEmail } as never,
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { createNotification } as never,
+    );
+
+    const result = await service.bulkUpdateStatus(
+      {
+        id: 'admin-id',
+        email: 'admin@example.com',
+        fullName: 'Admin',
+        role: 'admin',
+        authProviders: ['password'],
+        emailVerified: true,
+      },
+      {
+        orderIds: ['order-one', 'order-two', 'missing-order'],
+        status: OrderStatus.processing,
+      },
+    );
+
+    expect(prisma.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: { in: ['order-one', 'order-two', 'missing-order'] },
+        },
+      }),
+    );
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'order-one' },
+        data: { status: OrderStatus.processing },
+      }),
+    );
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-one',
+        event: 'order_status_changed',
+        orderId: 'order-one',
+        metadata: {
+          orderId: 'order-one',
+          oldStatus: OrderStatus.confirmed,
+          newStatus: OrderStatus.processing,
+        },
+      }),
+      { actorUserId: 'admin-id', source: NotificationSource.order },
+    );
+    expect(sendTemplateEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'customer@example.com',
+        template: 'order-status',
+        variables: expect.objectContaining({
+          orderNumber: 'order-one',
+          orderStatus: OrderStatus.processing,
+          orderMessage: 'Your order status has been updated to Processing.',
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      message: 'Bulk order status update completed.',
+      status: OrderStatus.processing,
+      summary: {
+        requested: 3,
+        updated: 1,
+        unchanged: 1,
+        notFound: 1,
+      },
+      updatedOrderIds: ['order-one'],
+      unchangedOrderIds: ['order-two'],
+      notFoundOrderIds: ['missing-order'],
+    });
   });
 });

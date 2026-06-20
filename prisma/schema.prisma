@@ -7,30 +7,31 @@ datasource db {
 }
 
 model User {
-  id                  String               @id @default(uuid())
-  email               String               @unique
-  fullName            String               @map("full_name")
-  passwordHash        String?
-  authProviders       String[]             @default([])
-  role                String               @default("user")
-  emailVerifiedAt     DateTime?            @map("email_verified_at")
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  permissions         UserPermission[]
-  passwordSetupTokens PasswordSetupToken[]
-  emailVerificationTokens EmailVerificationToken[]
-  refreshTokens       RefreshToken[]
-  authProviderLinks   UserAuthProvider[]
-  payments            Payment[]
-  orders              Order[]
-  addresses           UserAddress[]
-  couponEligibilities CouponCustomer[]
-  couponRedemptions   CouponRedemption[]
-  orderFeedbacks      OrderFeedback[]
-  wishlists           Wishlist[]
-  priceAlerts         PriceAlert[]
-  notifications       Notification[]       @relation("NotificationRecipient")
-  triggeredNotifications Notification[]    @relation("NotificationActor")
+  id                           String                        @id @default(uuid())
+  email                        String                        @unique
+  fullName                     String                        @map("full_name")
+  passwordHash                 String?
+  authProviders                String[]                      @default([])
+  role                         String                        @default("user")
+  emailVerifiedAt              DateTime?                     @map("email_verified_at")
+  createdAt                    DateTime                      @default(now())
+  updatedAt                    DateTime                      @updatedAt
+  permissions                  UserPermission[]
+  passwordSetupTokens          PasswordSetupToken[]
+  emailVerificationTokens      EmailVerificationToken[]
+  refreshTokens                RefreshToken[]
+  authProviderLinks            UserAuthProvider[]
+  payments                     Payment[]
+  orders                       Order[]
+  addresses                    UserAddress[]
+  couponEligibilities          CouponCustomer[]
+  couponRedemptions            CouponRedemption[]
+  orderFeedbacks               OrderFeedback[]
+  wishlists                    Wishlist[]
+  priceAlerts                  PriceAlert[]
+  notifications                Notification[]                @relation("NotificationRecipient")
+  triggeredNotifications       Notification[]                @relation("NotificationActor")
+  paystackBankTransferAccounts PaystackBankTransferAccount[]
 
   @@map("users")
 }
@@ -389,20 +390,20 @@ enum NotificationPriority {
 }
 
 model Product {
-  id           String           @id @default(uuid())
-  name         String
-  description  String?
-  sku          String           @unique
-  category     ProductCategory?
-  imageUrl     String?          @map("image_url")
-  status       ProductStatus    @default(active)
-  createdAt    DateTime         @default(now()) @map("created_at")
-  updatedAt    DateTime         @updatedAt @map("updated_at")
-  marketPrices MarketPrice[]
-  buyPrices    BuyPrice[]
-  orderItems   OrderItem[]
+  id            String           @id @default(uuid())
+  name          String
+  description   String?
+  sku           String           @unique
+  category      ProductCategory?
+  imageUrl      String?          @map("image_url")
+  status        ProductStatus    @default(active)
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+  marketPrices  MarketPrice[]
+  buyPrices     BuyPrice[]
+  orderItems    OrderItem[]
   wishlistItems WishlistItem[]
-  priceAlerts PriceAlert[]
+  priceAlerts   PriceAlert[]
 
   @@index([category])
   @@map("products")
@@ -415,7 +416,7 @@ model Notification {
   title         String
   body          String
   source        NotificationSource
-  event         String?              
+  event         String?
   channel       NotificationChannel  @default(in_app)
   status        NotificationStatus   @default(sent)
   priority      NotificationPriority @default(normal)
@@ -644,47 +645,48 @@ model CouponRedemption {
 }
 
 model Order {
-  id                   String            @id @default(uuid())
-  userId               String            @map("user_id")
-  deliveryAddressId    String?           @map("delivery_address_id")
-  deliveryZoneId       String?           @map("delivery_zone_id")
-  serviceFeeRuleId     String?           @map("service_fee_rule_id")
-  promotionId          String?           @map("promotion_id")
-  couponId             String?           @map("coupon_id")
-  status               OrderStatus       @default(pending)
-  paymentStatus        OrderPaymentStatus @default(pending) @map("payment_status")
-  subtotal             Decimal           @default(0) @db.Decimal(12, 2)
-  discountAmount       Decimal           @default(0) @map("discount_amount") @db.Decimal(12, 2)
-  promotionDiscount    Decimal           @default(0) @map("promotion_discount") @db.Decimal(12, 2)
-  couponDiscount       Decimal           @default(0) @map("coupon_discount") @db.Decimal(12, 2)
-  serviceFee           Decimal           @default(0) @map("service_fee") @db.Decimal(12, 2)
-  serviceFeePercentage Decimal           @default(0) @map("service_fee_percentage") @db.Decimal(5, 2)
-  serviceFeeBase       Decimal           @default(0) @map("service_fee_base") @db.Decimal(12, 2)
-  deliveryFee          Decimal           @default(0) @map("delivery_fee") @db.Decimal(12, 2)
-  total                Decimal           @default(0) @db.Decimal(12, 2)
-  couponCode           String?           @map("coupon_code")
-  promotionName        String?           @map("promotion_name")
-  deliveryRecipientName String?          @map("delivery_recipient_name")
-  deliveryPhoneNumber  String?           @map("delivery_phone_number")
-  deliveryAddress      String?           @map("delivery_address")
-  deliveryGooglePlaceId String?          @map("delivery_google_place_id")
-  deliveryLatitude     Decimal?          @map("delivery_latitude") @db.Decimal(10, 7)
-  deliveryLongitude    Decimal?          @map("delivery_longitude") @db.Decimal(10, 7)
-  note                 String?
-  createdAt            DateTime          @default(now()) @map("created_at")
-  updatedAt            DateTime          @updatedAt @map("updated_at")
-  user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  address              UserAddress?      @relation(fields: [deliveryAddressId], references: [id], onDelete: SetNull)
-  deliveryZone         DeliveryZone?     @relation(fields: [deliveryZoneId], references: [id], onDelete: SetNull)
-  serviceFeeRule       ServiceFeeRule?   @relation(fields: [serviceFeeRuleId], references: [id], onDelete: SetNull)
-  promotion            Promotion?        @relation(fields: [promotionId], references: [id], onDelete: SetNull)
-  coupon               Coupon?           @relation(fields: [couponId], references: [id], onDelete: SetNull)
-  couponRedemption     CouponRedemption?
-  feedback             OrderFeedback?
-  items                OrderItem[]
-  payments             Payment[]
-  wishlist             Wishlist?
-  notifications        Notification[]
+  id                           String                        @id @default(uuid())
+  userId                       String                        @map("user_id")
+  deliveryAddressId            String?                       @map("delivery_address_id")
+  deliveryZoneId               String?                       @map("delivery_zone_id")
+  serviceFeeRuleId             String?                       @map("service_fee_rule_id")
+  promotionId                  String?                       @map("promotion_id")
+  couponId                     String?                       @map("coupon_id")
+  status                       OrderStatus                   @default(pending)
+  paymentStatus                OrderPaymentStatus            @default(pending) @map("payment_status")
+  subtotal                     Decimal                       @default(0) @db.Decimal(12, 2)
+  discountAmount               Decimal                       @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  promotionDiscount            Decimal                       @default(0) @map("promotion_discount") @db.Decimal(12, 2)
+  couponDiscount               Decimal                       @default(0) @map("coupon_discount") @db.Decimal(12, 2)
+  serviceFee                   Decimal                       @default(0) @map("service_fee") @db.Decimal(12, 2)
+  serviceFeePercentage         Decimal                       @default(0) @map("service_fee_percentage") @db.Decimal(5, 2)
+  serviceFeeBase               Decimal                       @default(0) @map("service_fee_base") @db.Decimal(12, 2)
+  deliveryFee                  Decimal                       @default(0) @map("delivery_fee") @db.Decimal(12, 2)
+  total                        Decimal                       @default(0) @db.Decimal(12, 2)
+  couponCode                   String?                       @map("coupon_code")
+  promotionName                String?                       @map("promotion_name")
+  deliveryRecipientName        String?                       @map("delivery_recipient_name")
+  deliveryPhoneNumber          String?                       @map("delivery_phone_number")
+  deliveryAddress              String?                       @map("delivery_address")
+  deliveryGooglePlaceId        String?                       @map("delivery_google_place_id")
+  deliveryLatitude             Decimal?                      @map("delivery_latitude") @db.Decimal(10, 7)
+  deliveryLongitude            Decimal?                      @map("delivery_longitude") @db.Decimal(10, 7)
+  note                         String?
+  createdAt                    DateTime                      @default(now()) @map("created_at")
+  updatedAt                    DateTime                      @updatedAt @map("updated_at")
+  user                         User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  address                      UserAddress?                  @relation(fields: [deliveryAddressId], references: [id], onDelete: SetNull)
+  deliveryZone                 DeliveryZone?                 @relation(fields: [deliveryZoneId], references: [id], onDelete: SetNull)
+  serviceFeeRule               ServiceFeeRule?               @relation(fields: [serviceFeeRuleId], references: [id], onDelete: SetNull)
+  promotion                    Promotion?                    @relation(fields: [promotionId], references: [id], onDelete: SetNull)
+  coupon                       Coupon?                       @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  couponRedemption             CouponRedemption?
+  feedback                     OrderFeedback?
+  items                        OrderItem[]
+  payments                     Payment[]
+  paystackBankTransferAccounts PaystackBankTransferAccount[]
+  wishlist                     Wishlist?
+  notifications                Notification[]
 
   @@index([userId])
   @@index([deliveryAddressId])
@@ -786,25 +788,58 @@ enum PaymentStatus {
 }
 
 model Payment {
-  id                String          @id @default(uuid())
-  userId            String          @map("user_id")
-  orderId           String?         @map("order_id")
-  amount            Decimal         @db.Decimal(12, 2)
-  currency          String          @default("NGN")
-  provider          PaymentProvider
-  providerReference String?         @unique @map("provider_reference")
-  status            PaymentStatus   @default(pending)
-  paidAt            DateTime?       @map("paid_at")
-  createdAt         DateTime        @default(now()) @map("created_at")
-  updatedAt         DateTime        @updatedAt @map("updated_at")
-  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  order             Order?          @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  notifications     Notification[]
+  id                           String                        @id @default(uuid())
+  userId                       String                        @map("user_id")
+  orderId                      String?                       @map("order_id")
+  amount                       Decimal                       @db.Decimal(12, 2)
+  currency                     String                        @default("NGN")
+  provider                     PaymentProvider
+  providerReference            String?                       @unique @map("provider_reference")
+  status                       PaymentStatus                 @default(pending)
+  paidAt                       DateTime?                     @map("paid_at")
+  createdAt                    DateTime                      @default(now()) @map("created_at")
+  updatedAt                    DateTime                      @updatedAt @map("updated_at")
+  user                         User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order                        Order?                        @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  notifications                Notification[]
+  paystackBankTransferAccounts PaystackBankTransferAccount[]
 
   @@index([userId])
   @@index([orderId])
   @@index([status])
   @@map("payments")
+}
+
+model PaystackBankTransferAccount {
+  id                       String        @id @default(uuid())
+  orderId                  String        @map("order_id")
+  paymentId                String        @map("payment_id")
+  userId                   String        @map("user_id")
+  providerReference        String        @map("provider_reference")
+  accountName              String?       @map("account_name")
+  accountNumber            String        @map("account_number")
+  bankName                 String?       @map("bank_name")
+  bankCode                 String?       @map("bank_code")
+  amount                   Decimal       @db.Decimal(12, 2)
+  currency                 String        @default("NGN")
+  accountExpiresAt         DateTime?     @map("account_expires_at")
+  status                   PaymentStatus @default(pending)
+  paidAt                   DateTime?     @map("paid_at")
+  generatedRawProviderData Json?         @map("generated_raw_provider_data")
+  paidRawProviderData      Json?         @map("paid_raw_provider_data")
+  createdAt                DateTime      @default(now()) @map("created_at")
+  updatedAt                DateTime      @updatedAt @map("updated_at")
+  order                    Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  payment                  Payment       @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  user                     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([paymentId, accountNumber])
+  @@index([orderId])
+  @@index([paymentId])
+  @@index([userId])
+  @@index([providerReference])
+  @@index([status])
+  @@map("paystack_bank_transfer_accounts")
 }
 
 model WebhookLog {

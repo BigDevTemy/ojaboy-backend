@@ -39,6 +39,27 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function formatOrderStatus(value: string): string {
+  const normalized = value.replace(/[_-]+/g, ' ').trim();
+
+  if (!normalized) {
+    return 'Updated';
+  }
+
+  return normalized
+    .split(/\s+/)
+    .map((word, index) => {
+      const lowerWord = word.toLowerCase();
+
+      if (index > 0 && ['for', 'of', 'to'].includes(lowerWord)) {
+        return lowerWord;
+      }
+
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(' ');
+}
+
 const templates: Record<EmailTemplateName, EmailTemplate> = {
   'email-verification': {
     subject: () => 'Verify your Ojaboy email address',
@@ -184,16 +205,240 @@ const templates: Record<EmailTemplateName, EmailTemplate> = {
       ].join('\n');
     },
   },
+  'password-reset': {
+    subject: () => 'Reset your Ojaboy password',
+    html: (variables) => {
+      const fullName = escapeHtml(getValue(variables, 'fullName', 'there'));
+      const resetLink = escapeHtml(getValue(variables, 'resetLink'));
+      const expiresIn = escapeHtml(getValue(variables, 'expiresIn', '1 hour'));
+      const supportEmail = escapeHtml(
+        getValue(variables, 'supportEmail', 'support@ojaboy.com'),
+      );
+
+      return `
+        <!doctype html>
+        <html>
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Reset your Ojaboy password</title>
+          </head>
+          <body style="margin:0; padding:0; background:#f7f7f7; font-family:Arial, Helvetica, sans-serif; color:#111827;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f7f7; padding:40px 12px;">
+              <tr>
+                <td align="center">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#ffffff; border-radius:18px; overflow:hidden; box-shadow:0 10px 35px rgba(0,0,0,0.08);">
+                    <tr>
+                      <td align="center" style="padding:40px 55px 20px;">
+                        <h2 style="margin:0 0 15px; font-size:30px; line-height:1.25; font-weight:800; color:#111111;">
+                          Reset your password
+                        </h2>
+                        <p style="margin:0 auto; max-width:500px; font-size:16px; line-height:1.7; color:#555555;">
+                          Hello ${fullName}, we received a request to change the password for your Ojaboy account.
+                        </p>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="padding:15px 55px 35px;">
+                        <a href="${resetLink}" style="display:inline-block; background:#f20505; color:#ffffff; text-decoration:none; padding:17px 56px; border-radius:10px; font-size:18px; line-height:1.2; font-weight:bold;">
+                          Reset Password
+                        </a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:0 55px 35px;">
+                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#fff0f0; border-radius:14px;">
+                          <tr>
+                            <td style="padding:22px; color:#555555; font-size:14px; line-height:1.7;">
+                              This password reset link expires in <strong>${expiresIn}</strong>. If you did not request it, you can safely ignore this email.
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:0 55px 35px; color:#777777; font-size:13px; line-height:1.6; word-break:break-all;">
+                        If the button does not work, open this link:<br />
+                        <a href="${resetLink}" style="color:#e60000;">${resetLink}</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="padding:28px 55px 35px; border-top:1px solid #eeeeee; color:#555555; font-size:14px; line-height:1.6;">
+                        <strong>Need help?</strong><br />
+                        Contact us at <a href="mailto:${supportEmail}" style="color:#e60000; text-decoration:none; font-weight:bold;">${supportEmail}</a>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+        </html>
+      `;
+    },
+    text: (variables) => {
+      const fullName = getValue(variables, 'fullName', 'there');
+      const resetLink = getValue(variables, 'resetLink');
+      const expiresIn = getValue(variables, 'expiresIn', '1 hour');
+      const supportEmail = getValue(
+        variables,
+        'supportEmail',
+        'support@ojaboy.com',
+      );
+
+      return [
+        `Hello ${fullName},`,
+        '',
+        'We received a request to change the password for your Ojaboy account.',
+        `Reset your password here: ${resetLink}`,
+        '',
+        `This link expires in ${expiresIn}.`,
+        'If you did not request it, you can safely ignore this email.',
+        '',
+        `Need help? Contact ${supportEmail}`,
+      ].join('\n');
+    },
+  },
+  'paystack-bank-transfer': {
+    subject: (variables) => {
+      const orderNumber = getValue(variables, 'orderNumber');
+
+      return orderNumber
+        ? `Payment details for order ${orderNumber}`
+        : 'Your Ojaboy payment details';
+    },
+    html: (variables) => {
+      const fullName = escapeHtml(getValue(variables, 'fullName', 'there'));
+      const orderNumber = escapeHtml(getValue(variables, 'orderNumber'));
+      const accountName = escapeHtml(getValue(variables, 'accountName', '-'));
+      const accountNumber = escapeHtml(getValue(variables, 'accountNumber'));
+      const bankName = escapeHtml(getValue(variables, 'bankName', '-'));
+      const amount = escapeHtml(getValue(variables, 'amount'));
+      const expiresAt = escapeHtml(getValue(variables, 'expiresAt', 'soon'));
+      const supportEmail = escapeHtml(
+        getValue(variables, 'supportEmail', 'support@ojaboy.com'),
+      );
+
+      return `
+        <!doctype html>
+        <html>
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Ojaboy payment details</title>
+          </head>
+          <body style="margin:0; padding:0; background:#f7f7f7; font-family:Arial, Helvetica, sans-serif; color:#111827;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f7f7; padding:40px 12px;">
+              <tr>
+                <td align="center">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#ffffff; border-radius:18px; overflow:hidden; box-shadow:0 10px 35px rgba(0,0,0,0.08);">
+                    <tr>
+                      <td align="center" style="padding:38px 55px 16px;">
+                        <h2 style="margin:0 0 12px; font-size:32px; line-height:1.25; font-weight:800; color:#111111;">
+                          Complete Your Payment
+                        </h2>
+                        <p style="margin:0 auto; max-width:500px; font-size:16px; line-height:1.7; color:#555555;">
+                          Hello ${fullName}, please transfer the exact amount below to complete your Ojaboy order.
+                        </p>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="padding:12px 55px 30px;">
+                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#fff0f0; border-radius:16px;">
+                          <tr>
+                            <td align="center" style="padding:28px 22px;">
+                              <div style="margin:0 0 9px; color:#e60000; font-size:13px; line-height:1.4; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;">
+                                Bank Account Number
+                              </div>
+                              <div style="display:inline-block; background:#f20505; color:#ffffff; padding:16px 34px; border-radius:999px; font-size:28px; line-height:1.2; font-weight:800; letter-spacing:1px;">
+                                ${accountNumber}
+                              </div>
+                              <div style="margin-top:18px; color:#555555; font-size:14px; line-height:1.6;">
+                                Order number: <strong style="color:#111111;">${orderNumber}</strong>
+                              </div>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:0 55px 35px;">
+                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#fafafa; border-radius:14px; font-size:15px; line-height:1.6;">
+                          <tr>
+                            <td style="padding:20px 22px;">
+                              <p style="margin:0 0 10px;"><strong>Bank:</strong> <span style="float:right;">${bankName}</span></p>
+                              <p style="margin:0 0 10px;"><strong>Account name:</strong> <span style="float:right;">${accountName}</span></p>
+                              <p style="margin:0 0 10px;"><strong>Amount:</strong> <strong style="float:right; color:#e60000;">${amount}</strong></p>
+                              <p style="margin:0;"><strong>Expires:</strong> <span style="float:right;">${expiresAt}</span></p>
+                            </td>
+                          </tr>
+                        </table>
+                        <p style="margin:18px 0 0; color:#555555; font-size:14px; line-height:1.7;">
+                          Use this account for this order only. Your order will be updated automatically once payment is confirmed.
+                        </p>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="padding:28px 55px 35px; border-top:1px solid #eeeeee; color:#555555; font-size:14px; line-height:1.6;">
+                        <strong>Need help?</strong><br />
+                        Contact us at <a href="mailto:${supportEmail}" style="color:#e60000; text-decoration:none; font-weight:bold;">${supportEmail}</a>
+                        <div style="margin-top:25px; font-size:13px; color:#999999;">
+                          &copy; 2026 Ojaboy. All rights reserved.
+                        </div>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+        </html>
+      `;
+    },
+    text: (variables) => {
+      const fullName = getValue(variables, 'fullName', 'there');
+      const orderNumber = getValue(variables, 'orderNumber');
+      const accountName = getValue(variables, 'accountName', '-');
+      const accountNumber = getValue(variables, 'accountNumber');
+      const bankName = getValue(variables, 'bankName', '-');
+      const amount = getValue(variables, 'amount');
+      const expiresAt = getValue(variables, 'expiresAt', 'soon');
+      const supportEmail = getValue(
+        variables,
+        'supportEmail',
+        'support@ojaboy.com',
+      );
+
+      return [
+        `Hello ${fullName},`,
+        '',
+        `Payment details for order ${orderNumber}`,
+        `Bank: ${bankName}`,
+        `Account name: ${accountName}`,
+        `Account number: ${accountNumber}`,
+        `Amount: ${amount}`,
+        `Expires: ${expiresAt}`,
+        '',
+        'Use this account for this order only. Your order will be updated automatically once payment is confirmed.',
+        '',
+        `Need help? Contact ${supportEmail}`,
+      ].join('\n');
+    },
+  },
   'order-status': {
     subject: (variables) => {
-      const orderStatus = getValue(variables, 'orderStatus', 'updated');
+      const orderStatus = formatOrderStatus(
+        getValue(variables, 'orderStatus', 'updated'),
+      );
 
       return `Your order is ${orderStatus}`;
     },
     html: (variables) => {
       const fullName = escapeHtml(getValue(variables, 'fullName', 'there'));
       const orderNumber = escapeHtml(getValue(variables, 'orderNumber'));
-      const orderStatus = escapeHtml(getValue(variables, 'orderStatus'));
+      const orderStatus = escapeHtml(
+        formatOrderStatus(getValue(variables, 'orderStatus')),
+      );
       const subtotal = escapeHtml(getValue(variables, 'subtotal'));
       const discountAmount = escapeHtml(getValue(variables, 'discountAmount'));
       const serviceFee = escapeHtml(getValue(variables, 'serviceFee'));
@@ -222,38 +467,99 @@ const templates: Record<EmailTemplateName, EmailTemplate> = {
         .join('');
 
       return `
-        <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
-          <h2 style="margin: 0 0 16px;">Order update</h2>
-          <p>Hello ${fullName},</p>
-          <p>${orderMessage}</p>
-          <p><strong>Order number:</strong> ${orderNumber}</p>
-          <p><strong>Status:</strong> ${orderStatus}</p>
-          <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-            <thead>
-              <tr style="background: #f3f4f6;">
-                <th style="padding: 10px; text-align: left;">Product</th>
-                <th style="padding: 10px; text-align: left;">Quantity</th>
-                <th style="padding: 10px; text-align: right;">Unit price</th>
-                <th style="padding: 10px; text-align: right;">Total</th>
+        <!doctype html>
+        <html>
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Ojaboy order update</title>
+          </head>
+          <body style="margin:0; padding:0; background:#f7f7f7; font-family:Arial, Helvetica, sans-serif; color:#111827;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f7f7; padding:40px 12px;">
+              <tr>
+                <td align="center">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#ffffff; border-radius:18px; overflow:hidden; box-shadow:0 10px 35px rgba(0,0,0,0.08);">
+                    <tr>
+                      <td align="center" style="padding:38px 55px 16px;">
+                        <h2 style="margin:0 0 12px; font-size:32px; line-height:1.25; font-weight:800; color:#111111;">
+                          Order Status Updated
+                        </h2>
+                        <p style="margin:0 auto; max-width:500px; font-size:16px; line-height:1.7; color:#555555;">
+                          Hello ${fullName}, ${orderMessage}
+                        </p>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="padding:12px 55px 30px;">
+                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#fff0f0; border-radius:16px;">
+                          <tr>
+                            <td align="center" style="padding:28px 22px;">
+                              <div style="margin:0 0 9px; color:#e60000; font-size:13px; line-height:1.4; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;">
+                                Current Status
+                              </div>
+                              <div style="display:inline-block; background:#f20505; color:#ffffff; padding:16px 34px; border-radius:999px; font-size:28px; line-height:1.2; font-weight:800;">
+                                ${orderStatus}
+                              </div>
+                              <div style="margin-top:18px; color:#555555; font-size:14px; line-height:1.6;">
+                                Order number: <strong style="color:#111111;">${orderNumber}</strong>
+                              </div>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:0 55px 20px;">
+                        <h3 style="margin:0 0 14px; font-size:20px; line-height:1.3; color:#111111;">Order Summary</h3>
+                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse; font-size:14px; line-height:1.5;">
+                          <thead>
+                            <tr style="background:#f3f4f6;">
+                              <th style="padding:12px 10px; text-align:left; color:#111827;">Product</th>
+                              <th style="padding:12px 10px; text-align:left; color:#111827;">Qty</th>
+                              <th style="padding:12px 10px; text-align:right; color:#111827;">Unit</th>
+                              <th style="padding:12px 10px; text-align:right; color:#111827;">Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>${itemRows}</tbody>
+                        </table>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:0 55px 35px;">
+                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#fafafa; border-radius:14px; font-size:15px; line-height:1.6;">
+                          <tr>
+                            <td style="padding:20px 22px;">
+                              <p style="margin:0 0 8px;"><strong>Subtotal:</strong> <span style="float:right;">${subtotal}</span></p>
+                              ${discountAmount ? `<p style="margin:0 0 8px;"><strong>Discount:</strong> <span style="float:right;">-${discountAmount}</span></p>` : ''}
+                              <p style="margin:0 0 8px;"><strong>Service fee:</strong> <span style="float:right;">${serviceFee}</span></p>
+                              <p style="margin:0 0 12px;"><strong>Delivery fee:</strong> <span style="float:right;">${deliveryFee}</span></p>
+                              <p style="margin:12px 0 0; padding-top:12px; border-top:1px solid #e5e7eb; font-size:18px;"><strong>Total:</strong> <strong style="float:right; color:#e60000;">${total}</strong></p>
+                            </td>
+                          </tr>
+                        </table>
+                        ${note ? `<p style="margin:18px 0 0; color:#555555; font-size:14px; line-height:1.6;"><strong>Order note:</strong> ${note}</p>` : ''}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="padding:28px 55px 35px; border-top:1px solid #eeeeee; color:#555555; font-size:14px; line-height:1.6;">
+                        Thank you for shopping with Ojaboy.
+                        <div style="margin-top:25px; font-size:13px; color:#999999;">
+                          &copy; 2026 Ojaboy. All rights reserved.
+                        </div>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
               </tr>
-            </thead>
-            <tbody>${itemRows}</tbody>
-          </table>
-          <div style="margin-left: auto; max-width: 320px;">
-            <p><strong>Subtotal:</strong> <span style="float: right;">${subtotal}</span></p>
-            ${discountAmount ? `<p><strong>Discount:</strong> <span style="float: right;">-${discountAmount}</span></p>` : ''}
-            <p><strong>Service fee:</strong> <span style="float: right;">${serviceFee}</span></p>
-            <p><strong>Delivery fee:</strong> <span style="float: right;">${deliveryFee}</span></p>
-            <p style="font-size: 18px;"><strong>Total:</strong> <strong style="float: right;">${total}</strong></p>
-          </div>
-          ${note ? `<p><strong>Order note:</strong> ${note}</p>` : ''}
-        </div>
+            </table>
+          </body>
+        </html>
       `;
     },
     text: (variables) => {
       const fullName = getValue(variables, 'fullName', 'there');
       const orderNumber = getValue(variables, 'orderNumber');
-      const orderStatus = getValue(variables, 'orderStatus');
+      const orderStatus = formatOrderStatus(getValue(variables, 'orderStatus'));
       const subtotal = getValue(variables, 'subtotal');
       const discountAmount = getValue(variables, 'discountAmount');
       const serviceFee = getValue(variables, 'serviceFee');

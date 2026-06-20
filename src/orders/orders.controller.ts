@@ -15,6 +15,7 @@ import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { InternalApiTokenGuard } from '../common/guards/internal-api-token.guard';
+import { BulkUpdateOrderStatusDto } from './dto/bulk-update-order-status.dto';
 import { CreateOrderFeedbackDto } from './dto/create-order-feedback.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderListQueryDto } from './dto/order-list-query.dto';
@@ -90,6 +91,15 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ordersService.findOneForUser(user, id);
+  }
+
+  @Patch('bulk/status')
+  @UseGuards(JwtAuthGuard)
+  bulkUpdateStatus(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: BulkUpdateOrderStatusDto,
+  ) {
+    return this.ordersService.bulkUpdateStatus(user, dto);
   }
 
   @Patch(':id/status')

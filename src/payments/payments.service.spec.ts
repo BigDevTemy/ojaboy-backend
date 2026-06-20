@@ -9,10 +9,14 @@ describe('PaymentsService', () => {
   const configService = {
     get: jest.fn().mockReturnValue(secretKey),
   } as unknown as ConfigService;
+  const emailService = {
+    sendTemplateEmail: jest.fn().mockResolvedValue(undefined),
+  };
 
   afterEach(() => {
     jest.useRealTimers();
     jest.restoreAllMocks();
+    emailService.sendTemplateEmail.mockClear();
   });
 
   it('adds a bank transfer expiry exactly 15 minutes ahead', async () => {
@@ -24,7 +28,11 @@ describe('PaymentsService', () => {
         headers: { 'Content-Type': 'application/json' },
       }),
     );
-    const service = new PaymentsService({} as never, configService);
+    const service = new PaymentsService(
+      {} as never,
+      configService,
+      emailService as never,
+    );
 
     await service.charge({
       email: 'Customer@Example.com',
@@ -54,12 +62,19 @@ describe('PaymentsService', () => {
           amount: { toNumber: () => 50_000 },
           currency: 'NGN',
           order: { paymentStatus: OrderPaymentStatus.pending },
-          user: { email: 'customer@example.com' },
+          user: {
+            email: 'customer@example.com',
+            fullName: 'Test Customer',
+          },
         }),
         update: paymentUpdate,
       },
     };
-    const service = new PaymentsService(prisma as never, configService);
+    const service = new PaymentsService(
+      prisma as never,
+      configService,
+      emailService as never,
+    );
 
     await expect(
       service.initializePaymentAttempt('payment-id'),
@@ -86,7 +101,10 @@ describe('PaymentsService', () => {
           userId: 'user-id',
           total: { toNumber: () => 50_000 },
           paymentStatus: OrderPaymentStatus.pending,
-          user: { email: 'customer@example.com' },
+          user: {
+            email: 'customer@example.com',
+            fullName: 'Test Customer',
+          },
           payments: [
             {
               providerReference: 'order_order-id',
@@ -97,7 +115,11 @@ describe('PaymentsService', () => {
         }),
       },
     };
-    const service = new PaymentsService(prisma as never, configService);
+    const service = new PaymentsService(
+      prisma as never,
+      configService,
+      emailService as never,
+    );
 
     await expect(
       service.retryOrderPayment('order-id', 'customer@example.com'),
@@ -139,6 +161,7 @@ describe('PaymentsService', () => {
             {
               id: 'payment-id',
               orderId: 'order-id',
+              userId: 'user-id',
               providerReference: 'order_order-id',
               amount: { toNumber: () => 50_000 },
               currency: 'NGN',
@@ -149,8 +172,16 @@ describe('PaymentsService', () => {
         }),
       },
       payment: { update: paymentUpdate },
+      paystackBankTransferAccount: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
     };
-    const service = new PaymentsService(prisma as never, configService);
+    const service = new PaymentsService(
+      prisma as never,
+      configService,
+      emailService as never,
+    );
 
     await expect(
       service.retryOrderPayment('order-id', 'customer@example.com'),
@@ -164,6 +195,38 @@ describe('PaymentsService', () => {
       where: { id: 'payment-id' },
       data: { status: PaymentStatus.pending },
     });
+    expect(prisma.paystackBankTransferAccount.upsert).toHaveBeenCalledWith({
+      where: {
+        paymentId_accountNumber: {
+          paymentId: 'payment-id',
+          accountNumber: '1234567890',
+        },
+      },
+      update: expect.objectContaining({
+        providerReference: 'order_order-id',
+        currency: 'NGN',
+        status: PaymentStatus.pending,
+      }),
+      create: expect.objectContaining({
+        orderId: 'order-id',
+        paymentId: 'payment-id',
+        userId: 'user-id',
+        providerReference: 'order_order-id',
+        accountNumber: '1234567890',
+        currency: 'NGN',
+        status: PaymentStatus.pending,
+      }),
+    });
+    expect(emailService.sendTemplateEmail).toHaveBeenCalledWith({
+      to: 'customer@example.com',
+      template: 'paystack-bank-transfer',
+      variables: expect.objectContaining({
+        fullName: 'Test Customer',
+        orderNumber: 'order-id',
+        accountNumber: '1234567890',
+        amount: expect.stringContaining('50,000.00'),
+      }),
+    });
   });
 
   it('rejects a webhook with an invalid signature', async () => {
@@ -171,6 +234,7 @@ describe('PaymentsService', () => {
     const service = new PaymentsService(
       { webhookLog: { create: webhookLogCreate } } as never,
       configService,
+      emailService as never,
     );
     const payload = { event: 'charge.success', data: {} };
     const rawBody = Buffer.from(JSON.stringify(payload));
@@ -188,7 +252,11 @@ describe('PaymentsService', () => {
       webhookLog: { create: webhookLogCreate },
       payment: { findUnique: paymentFindUnique },
     };
-    const service = new PaymentsService(prisma as never, configService);
+    const service = new PaymentsService(
+      prisma as never,
+      configService,
+      emailService as never,
+    );
     const payload = {
       event: 'charge.success',
       data: {
@@ -224,6 +292,7 @@ describe('PaymentsService', () => {
     const webhookLogCreate = jest.fn().mockResolvedValue({});
     const paymentUpdate = jest.fn().mockResolvedValue({});
     const orderUpdate = jest.fn().mockResolvedValue({});
+    const bankTransferUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
     const prisma = {
       webhookLog: {
         create: webhookLogCreate,
@@ -244,9 +313,16 @@ describe('PaymentsService', () => {
       order: {
         update: orderUpdate,
       },
+      paystackBankTransferAccount: {
+        updateMany: bankTransferUpdateMany,
+      },
       $transaction: jest.fn().mockResolvedValue([]),
     };
-    const service = new PaymentsService(prisma as never, configService);
+    const service = new PaymentsService(
+      prisma as never,
+      configService,
+      emailService as never,
+    );
     const payload = {
       event: 'charge.success',
       data: {
@@ -277,6 +353,14 @@ describe('PaymentsService', () => {
     expect(orderUpdate).toHaveBeenCalledWith({
       where: { id: 'order-id' },
       data: { paymentStatus: OrderPaymentStatus.paid },
+    });
+    expect(bankTransferUpdateMany).toHaveBeenCalledWith({
+      where: { paymentId: 'payment-id', orderId: 'order-id' },
+      data: {
+        status: PaymentStatus.successful,
+        paidAt: new Date('2026-06-11T12:05:00.000Z'),
+        paidRawProviderData: payload.data,
+      },
     });
     expect(webhookLogCreate).toHaveBeenCalledTimes(1);
   });
