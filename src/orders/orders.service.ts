@@ -1653,6 +1653,9 @@ export class OrdersService {
         },
       },
       payments: true,
+      paystackBankTransferAccounts: {
+        orderBy: { createdAt: 'desc' },
+      },
       feedback: true,
       address: true,
       deliveryZone: true,

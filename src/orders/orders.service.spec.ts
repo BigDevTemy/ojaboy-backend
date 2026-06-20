@@ -124,6 +124,11 @@ describe('OrdersService order authentication', () => {
     });
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        include: expect.objectContaining({
+          paystackBankTransferAccounts: {
+            orderBy: { createdAt: 'desc' },
+          },
+        }),
         where: {
           status: OrderStatus.pending,
           paymentStatus: OrderPaymentStatus.pending,

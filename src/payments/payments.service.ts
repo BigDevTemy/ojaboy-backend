@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -44,6 +45,8 @@ type BankTransferEmailRecipient = {
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
@@ -169,6 +172,22 @@ export class PaymentsService {
   }
 
   async retryOrderPayment(
+    orderId: string,
+    email: string,
+  ): Promise<PaymentInitializationResult> {
+    try {
+      return await this.retryOrderPaymentInternal(orderId, email);
+    } catch (error) {
+      this.logger.error(
+        `Payment retry failed for order ${orderId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+
+      throw error;
+    }
+  }
+
+  private async retryOrderPaymentInternal(
     orderId: string,
     email: string,
   ): Promise<PaymentInitializationResult> {
@@ -370,7 +389,12 @@ export class PaymentsService {
     attemptNumber: number,
   ) {
     return this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${orderId}))`;
+      await tx.$queryRaw`
+        WITH lock AS (
+          SELECT pg_advisory_xact_lock(hashtext(${orderId}))
+        )
+        SELECT 1 AS locked
+      `;
 
       const latestPayment = await tx.payment.findFirst({
         where: { orderId },
@@ -479,7 +503,7 @@ export class PaymentsService {
 
   async findAll() {
     const payments = await this.prisma.payment.findMany({
-      include: { user: true },
+      include: this.paymentInclude(),
       orderBy: { createdAt: 'desc' },
     });
 
@@ -489,7 +513,7 @@ export class PaymentsService {
   async findByUser(userId: string) {
     const payments = await this.prisma.payment.findMany({
       where: { userId },
-      include: { user: true },
+      include: this.paymentInclude(),
       orderBy: { createdAt: 'desc' },
     });
 
@@ -499,7 +523,7 @@ export class PaymentsService {
   async findByOrder(orderId: string) {
     const payments = await this.prisma.payment.findMany({
       where: { orderId },
-      include: { user: true },
+      include: this.paymentInclude(),
       orderBy: { createdAt: 'desc' },
     });
 
@@ -509,7 +533,7 @@ export class PaymentsService {
   async findOne(id: string) {
     const payment = await this.prisma.payment.findUnique({
       where: { id },
-      include: { user: true },
+      include: this.paymentInclude(),
     });
 
     if (!payment) {
@@ -524,7 +548,7 @@ export class PaymentsService {
       const payment = await this.prisma.payment.update({
         where: { id },
         data: this.toUpdateData(updatePaymentDto),
-        include: { user: true },
+        include: this.paymentInclude(),
       });
 
       return {
@@ -728,6 +752,15 @@ export class PaymentsService {
     );
   }
 
+  private paymentInclude() {
+    return {
+      user: true,
+      paystackBankTransferAccounts: {
+        orderBy: { createdAt: 'desc' },
+      },
+    } satisfies Prisma.PaymentInclude;
+  }
+
   private async readPaystackResponse(
     response: Response,
   ): Promise<Record<string, unknown>> {
@@ -847,28 +880,38 @@ export class PaymentsService {
       return;
     }
 
-    await this.emailService.sendTemplateEmail({
-      to: recipient.email,
-      template: 'paystack-bank-transfer',
-      variables: {
-        fullName: recipient.fullName ?? 'there',
-        orderNumber: savedBankDetails.payment.orderId,
-        accountName: savedBankDetails.details.accountName ?? '',
-        accountNumber: savedBankDetails.details.accountNumber,
-        bankName: savedBankDetails.details.bankName ?? '',
-        amount: this.formatMoney(
-          savedBankDetails.payment.amount.toNumber(),
-          savedBankDetails.payment.currency,
-        ),
-        expiresAt: savedBankDetails.details.accountExpiresAt
-          ? savedBankDetails.details.accountExpiresAt.toLocaleString('en-NG', {
-              dateStyle: 'medium',
-              timeStyle: 'short',
-            })
-          : '',
-        supportEmail: 'support@ojaboy.com',
-      },
-    });
+    try {
+      await this.emailService.sendTemplateEmail({
+        to: recipient.email,
+        template: 'paystack-bank-transfer',
+        variables: {
+          fullName: recipient.fullName ?? 'there',
+          orderNumber: savedBankDetails.payment.orderId,
+          accountName: savedBankDetails.details.accountName ?? '',
+          accountNumber: savedBankDetails.details.accountNumber,
+          bankName: savedBankDetails.details.bankName ?? '',
+          amount: this.formatMoney(
+            savedBankDetails.payment.amount.toNumber(),
+            savedBankDetails.payment.currency,
+          ),
+          expiresAt: savedBankDetails.details.accountExpiresAt
+            ? savedBankDetails.details.accountExpiresAt.toLocaleString(
+                'en-NG',
+                {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
+                },
+              )
+            : '',
+          supportEmail: 'support@ojaboy.com',
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Paystack bank transfer details for order ${savedBankDetails.payment.orderId} were saved, but the email could not be sent`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   private extractPaystackBankTransferDetails(
