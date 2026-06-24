@@ -32,6 +32,12 @@ model User {
   notifications                Notification[]                @relation("NotificationRecipient")
   triggeredNotifications       Notification[]                @relation("NotificationActor")
   paystackBankTransferAccounts PaystackBankTransferAccount[]
+  supportTickets               SupportTicket[]               @relation("SupportTicketCustomer")
+  assignedSupportTickets       SupportTicket[]               @relation("SupportTicketAssignee")
+  supportTicketMessages        SupportTicketMessage[]
+  assignedSupportTicketEvents  SupportTicketAssignment[]     @relation("SupportTicketNewAssignee")
+  previousSupportTicketEvents  SupportTicketAssignment[]     @relation("SupportTicketPreviousAssignee")
+  supportTicketAssignments     SupportTicketAssignment[]     @relation("SupportTicketAssignedBy")
 
   @@map("users")
 }
@@ -687,6 +693,7 @@ model Order {
   paystackBankTransferAccounts PaystackBankTransferAccount[]
   wishlist                     Wishlist?
   notifications                Notification[]
+  supportTickets               SupportTicket[]
 
   @@index([userId])
   @@index([deliveryAddressId])
@@ -747,6 +754,118 @@ model OrderFeedback {
   @@index([userId])
   @@index([rating])
   @@map("order_feedbacks")
+}
+
+enum SupportTicketStatus {
+  open
+  in_review
+  waiting_on_customer
+  resolved
+}
+
+enum SupportTicketCategory {
+  refund_and_payment
+  order_issue
+  delivery
+  account
+  general
+}
+
+enum SupportTicketPriority {
+  low
+  normal
+  high
+  urgent
+}
+
+enum SupportTicketSenderType {
+  customer
+  staff
+}
+
+enum SupportTicketAssignmentMethod {
+  auto
+  manual
+}
+
+model SupportTicket {
+  id                String                    @id @default(uuid())
+  ticketNumber      String                    @unique @map("ticket_number")
+  customerId        String                    @map("customer_id")
+  assignedToId      String                    @map("assigned_to_id")
+  orderId           String?                   @map("order_id")
+  subject           String
+  category          SupportTicketCategory
+  priority          SupportTicketPriority     @default(normal)
+  status            SupportTicketStatus       @default(open)
+  assignedAt        DateTime                  @default(now()) @map("assigned_at")
+  lastMessageAt     DateTime                  @default(now()) @map("last_message_at")
+  resolvedAt        DateTime?                 @map("resolved_at")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  updatedAt         DateTime                  @updatedAt @map("updated_at")
+  customer          User                      @relation("SupportTicketCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  assignedTo        User                      @relation("SupportTicketAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  order             Order?                    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  messages          SupportTicketMessage[]
+  assignmentHistory SupportTicketAssignment[]
+
+  @@index([customerId, status])
+  @@index([assignedToId, status])
+  @@index([priority])
+  @@index([orderId])
+  @@index([lastMessageAt])
+  @@map("support_tickets")
+}
+
+model SupportTicketMessage {
+  id          String                    @id @default(uuid())
+  ticketId    String                    @map("ticket_id")
+  senderId    String                    @map("sender_id")
+  senderType  SupportTicketSenderType   @map("sender_type")
+  message     String
+  createdAt   DateTime                  @default(now()) @map("created_at")
+  ticket      SupportTicket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sender      User                      @relation(fields: [senderId], references: [id], onDelete: Restrict)
+  attachments SupportTicketAttachment[]
+
+  @@index([ticketId, createdAt])
+  @@index([senderId])
+  @@map("support_ticket_messages")
+}
+
+model SupportTicketAttachment {
+  id           String               @id @default(uuid())
+  messageId    String               @map("message_id")
+  originalName String               @map("original_name")
+  mimeType     String               @map("mime_type")
+  size         Int
+  data         Bytes
+  createdAt    DateTime             @default(now()) @map("created_at")
+  message      SupportTicketMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("support_ticket_attachments")
+}
+
+model SupportTicketAssignment {
+  id                 String                        @id @default(uuid())
+  ticketId           String                        @map("ticket_id")
+  previousAssigneeId String?                       @map("previous_assignee_id")
+  newAssigneeId      String                        @map("new_assignee_id")
+  assignedById       String?                       @map("assigned_by_id")
+  method             SupportTicketAssignmentMethod
+  reason             String?
+  createdAt          DateTime                      @default(now()) @map("created_at")
+  ticket             SupportTicket                 @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  previousAssignee   User?                         @relation("SupportTicketPreviousAssignee", fields: [previousAssigneeId], references: [id], onDelete: SetNull)
+  newAssignee        User                          @relation("SupportTicketNewAssignee", fields: [newAssigneeId], references: [id], onDelete: Restrict)
+  assignedBy         User?                         @relation("SupportTicketAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@index([previousAssigneeId])
+  @@index([newAssigneeId])
+  @@index([assignedById])
+  @@map("support_ticket_assignments")
 }
 
 model OrderItem {

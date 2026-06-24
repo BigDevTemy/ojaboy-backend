@@ -24,6 +24,7 @@ import { ProductsModule } from './products/products.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { UsersModule } from './users/users.module';
 import { WishlistsModule } from './wishlists/wishlists.module';
+import { SupportTicketsModule } from './support-tickets/support-tickets.module';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { WishlistsModule } from './wishlists/wishlists.module';
     AddressesModule,
     CommerceConfigModule,
     WishlistsModule,
+    SupportTicketsModule,
   ],
   controllers: [AppController],
   providers: [
