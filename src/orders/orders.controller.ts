@@ -21,6 +21,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderListQueryDto } from './dto/order-list-query.dto';
 import { OrderPaginationQueryDto } from './dto/order-pagination-query.dto';
 import { QuoteOrderDto } from './dto/quote-order.dto';
+import { ResolveQuoteChoiceDto } from './dto/resolve-quote-choice.dto';
 import { RetryOrderPaymentDto } from './dto/retry-order-payment.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersService } from './orders.service';
@@ -68,6 +69,16 @@ export class OrdersController {
     @Param('orderId') orderId: string,
   ) {
     return this.ordersService.findUserOrderByEmailAndOrderId(email, orderId);
+  }
+
+  @Get('user/:userId')
+  @UseGuards(JwtAuthGuard)
+  getOrdersForUser(
+    @CurrentUser() user: AuthUser,
+    @Param('userId') userId: string,
+    @Query() pagination: OrderPaginationQueryDto,
+  ) {
+    return this.ordersService.getUserOrdersAsAdmin(user, userId, pagination);
   }
 
   @Get('export')
@@ -125,6 +136,13 @@ export class OrdersController {
   @UseGuards(OptionalJwtAuthGuard)
   quote(@Body() quoteOrderDto: QuoteOrderDto, @CurrentUser() user?: AuthUser) {
     return this.ordersService.quote(quoteOrderDto, user);
+  }
+
+  // Resolves one needs_confirmation line from /orders/quote after the
+  // customer picks a choice, without resubmitting the whole orderText.
+  @Post('quote/resolve-item')
+  resolveQuoteItem(@Body() dto: ResolveQuoteChoiceDto) {
+    return this.ordersService.resolveQuoteItem(dto);
   }
 
   @Post(':orderId/feedback')

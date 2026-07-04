@@ -60,6 +60,141 @@ function formatOrderStatus(value: string): string {
     .join(' ');
 }
 
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function renderAnnouncementHtml(
+  variables: EmailTemplateVariables,
+  options: { badgeLabel: string; heading: string },
+): string {
+  const fullName = escapeHtml(getValue(variables, 'fullName', 'there'));
+  const title = escapeHtml(getValue(variables, 'title', options.heading));
+  // body is author-supplied rich text (admin/AI-agent only), rendered as-is rather than escaped.
+  const body = getValue(variables, 'body', '');
+  const headerImageUrl = escapeHtml(getValue(variables, 'headerImageUrl', ''));
+  const badgeValue = escapeHtml(getValue(variables, 'badgeValue', ''));
+  const ctaLabel = escapeHtml(getValue(variables, 'ctaLabel', 'Learn more'));
+  const ctaUrl = escapeHtml(getValue(variables, 'ctaUrl', ''));
+  const supportEmail = escapeHtml(
+    getValue(variables, 'supportEmail', 'support@ojaboy.com'),
+  );
+
+  return `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>${title}</title>
+      </head>
+      <body style="margin:0; padding:0; background:#f7f7f7; font-family:Arial, Helvetica, sans-serif; color:#111827;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f7f7; padding:40px 12px;">
+          <tr>
+            <td align="center">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#ffffff; border-radius:18px; overflow:hidden; box-shadow:0 10px 35px rgba(0,0,0,0.08);">
+                ${
+                  headerImageUrl
+                    ? `<tr>
+                        <td style="padding:0; background:#ffffff;">
+                          <img src="${headerImageUrl}" alt="${title}" width="640" style="width:100%; max-width:640px; height:auto; display:block; border:0; outline:none; text-decoration:none;" />
+                        </td>
+                      </tr>`
+                    : ''
+                }
+                <tr>
+                  <td align="center" style="padding:38px 55px 16px;">
+                    <div style="margin:0 0 14px; color:#e60000; font-size:13px; line-height:1.4; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;">
+                      ${escapeHtml(options.badgeLabel)}
+                    </div>
+                    <h2 style="margin:0 0 15px; font-size:30px; line-height:1.25; font-weight:800; color:#111111;">
+                      ${title}
+                    </h2>
+                    <p style="margin:0 auto 18px; max-width:500px; font-size:16px; line-height:1.7; color:#555555;">
+                      Hello ${fullName},
+                    </p>
+                    <div style="margin:0 auto; max-width:500px; text-align:left; font-size:16px; line-height:1.7; color:#555555;">
+                      ${body}
+                    </div>
+                  </td>
+                </tr>
+                ${
+                  badgeValue
+                    ? `<tr>
+                        <td align="center" style="padding:12px 55px 30px;">
+                          <div style="display:inline-block; background:#f20505; color:#ffffff; padding:16px 34px; border-radius:999px; font-size:22px; line-height:1.2; font-weight:800; letter-spacing:1px;">
+                            ${badgeValue}
+                          </div>
+                        </td>
+                      </tr>`
+                    : ''
+                }
+                ${
+                  ctaUrl
+                    ? `<tr>
+                        <td align="center" style="padding:5px 55px 35px;">
+                          <a href="${ctaUrl}" style="display:inline-block; background:#f20505; color:#ffffff; text-decoration:none; padding:17px 56px; border-radius:10px; font-size:18px; line-height:1.2; font-weight:bold;">
+                            ${ctaLabel}
+                          </a>
+                        </td>
+                      </tr>`
+                    : ''
+                }
+                <tr>
+                  <td align="center" style="padding:28px 55px 35px; border-top:1px solid #eeeeee; color:#555555; font-size:14px; line-height:1.6;">
+                    <strong>Need help?</strong><br />
+                    Contact us at <a href="mailto:${supportEmail}" style="color:#e60000; text-decoration:none; font-weight:bold;">${supportEmail}</a>
+                    <div style="margin-top:25px; font-size:13px; color:#999999;">
+                      &copy; 2026 Ojaboy. All rights reserved.
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+  `;
+}
+
+function renderAnnouncementText(variables: EmailTemplateVariables): string {
+  const fullName = getValue(variables, 'fullName', 'there');
+  const title = getValue(variables, 'title', 'Announcement');
+  const body = stripHtml(getValue(variables, 'body', ''));
+  const badgeValue = getValue(variables, 'badgeValue', '');
+  const ctaUrl = getValue(variables, 'ctaUrl', '');
+  const supportEmail = getValue(
+    variables,
+    'supportEmail',
+    'support@ojaboy.com',
+  );
+
+  return [
+    `Hello ${fullName},`,
+    '',
+    title,
+    body,
+    ...(badgeValue ? ['', badgeValue] : []),
+    ...(ctaUrl ? ['', ctaUrl] : []),
+    '',
+    `Need help? Contact us at ${supportEmail}`,
+  ].join('\n');
+}
+
 const templates: Record<EmailTemplateName, EmailTemplate> = {
   'email-verification': {
     subject: () => 'Verify your Ojaboy email address',
@@ -786,6 +921,46 @@ const templates: Record<EmailTemplateName, EmailTemplate> = {
         `Need help? Contact us at ${supportEmail}`,
       ].join('\n');
     },
+  },
+  'announcement-closure': {
+    subject: (variables) =>
+      getValue(variables, 'title', 'Ojaboy store closure notice'),
+    html: (variables) =>
+      renderAnnouncementHtml(variables, {
+        badgeLabel: 'Store Closure',
+        heading: 'Store Closure Notice',
+      }),
+    text: (variables) => renderAnnouncementText(variables),
+  },
+  'announcement-coupon': {
+    subject: (variables) =>
+      getValue(variables, 'title', 'A new coupon just for you'),
+    html: (variables) =>
+      renderAnnouncementHtml(variables, {
+        badgeLabel: 'Coupon',
+        heading: 'New Coupon Available',
+      }),
+    text: (variables) => renderAnnouncementText(variables),
+  },
+  'announcement-promotion': {
+    subject: (variables) =>
+      getValue(variables, 'title', 'A new promotion just for you'),
+    html: (variables) =>
+      renderAnnouncementHtml(variables, {
+        badgeLabel: 'Promotion',
+        heading: 'New Promotion',
+      }),
+    text: (variables) => renderAnnouncementText(variables),
+  },
+  'announcement-custom': {
+    subject: (variables) =>
+      getValue(variables, 'title', 'An update from Ojaboy'),
+    html: (variables) =>
+      renderAnnouncementHtml(variables, {
+        badgeLabel: 'Announcement',
+        heading: 'An Update From Ojaboy',
+      }),
+    text: (variables) => renderAnnouncementText(variables),
   },
 };
 

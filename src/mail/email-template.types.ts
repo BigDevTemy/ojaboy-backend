@@ -5,7 +5,11 @@ export type EmailTemplateName =
   | 'paystack-bank-transfer'
   | 'order-status'
   | 'order-otp'
-  | 'welcome-note';
+  | 'welcome-note'
+  | 'announcement-closure'
+  | 'announcement-coupon'
+  | 'announcement-promotion'
+  | 'announcement-custom';
 
 export interface OrderEmailItem {
   productName: string;

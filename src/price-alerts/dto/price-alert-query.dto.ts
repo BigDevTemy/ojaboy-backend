@@ -1,5 +1,5 @@
 import { PriceAlertStatus } from '@prisma/client';
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class PriceAlertQueryDto {
   @IsOptional()
@@ -9,4 +9,8 @@ export class PriceAlertQueryDto {
   @IsOptional()
   @IsString()
   productId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  productOfferingId?: string;
 }

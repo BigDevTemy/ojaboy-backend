@@ -94,3 +94,67 @@ describe('paystack bank transfer template', () => {
     expect(rendered.text).toContain('Account number: 1234567890');
   });
 });
+
+describe('announcement coupon template', () => {
+  it('renders the coupon badge and call to action', () => {
+    const rendered = renderEmailTemplate('announcement-coupon', {
+      fullName: 'Test Customer',
+      title: 'A coupon just for you',
+      body: 'Use this code at checkout for 15% off.',
+      badgeValue: 'SAVE15',
+      ctaLabel: 'Shop now',
+      ctaUrl: 'https://app.ojaboy.com/shop',
+      supportEmail: 'support@ojaboy.com',
+    });
+
+    expect(rendered.subject).toBe('A coupon just for you');
+    expect(rendered.html).toContain('Coupon');
+    expect(rendered.html).toContain('SAVE15');
+    expect(rendered.html).toContain('Shop now');
+    expect(rendered.html).toContain('https://app.ojaboy.com/shop');
+    expect(rendered.text).toContain('SAVE15');
+  });
+});
+
+describe('announcement closure template', () => {
+  it('falls back to sensible defaults when optional variables are omitted', () => {
+    const rendered = renderEmailTemplate('announcement-closure', {
+      title: 'We will be closed for the holidays',
+      body: 'Ojaboy will be closed from Dec 24 to Dec 26.',
+    });
+
+    expect(rendered.subject).toBe('We will be closed for the holidays');
+    expect(rendered.html).toContain('Store Closure');
+    expect(rendered.html).toContain('Hello there,');
+    expect(rendered.html).not.toContain('<img');
+    expect(rendered.text).toContain(
+      'Ojaboy will be closed from Dec 24 to Dec 26.',
+    );
+  });
+
+  it('renders the header image only when provided, and treats body as HTML', () => {
+    const withHeader = renderEmailTemplate('announcement-closure', {
+      title: 'We will be closed for the holidays',
+      body: '<p>Ojaboy will be <strong>closed</strong> from Dec 24 to Dec 26.</p>',
+      headerImageUrl: 'https://cdn.example.com/closure-banner.png',
+    });
+
+    expect(withHeader.html).toContain(
+      '<img src="https://cdn.example.com/closure-banner.png"',
+    );
+    expect(withHeader.html).toContain(
+      '<p>Ojaboy will be <strong>closed</strong> from Dec 24 to Dec 26.</p>',
+    );
+    expect(withHeader.text).toContain(
+      'Ojaboy will be closed from Dec 24 to Dec 26.',
+    );
+    expect(withHeader.text).not.toContain('<strong>');
+
+    const withoutHeader = renderEmailTemplate('announcement-closure', {
+      title: 'We will be closed for the holidays',
+      body: 'Ojaboy will be closed from Dec 24 to Dec 26.',
+    });
+
+    expect(withoutHeader.html).not.toContain('<img');
+  });
+});

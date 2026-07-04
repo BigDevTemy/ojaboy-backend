@@ -1,4 +1,4 @@
-import { PriceQualityGrade, PriceSource, PriceUnit } from '@prisma/client';
+import { PriceQualityGrade, PriceSource } from '@prisma/client';
 import {
   IsDateString,
   IsEnum,
@@ -9,11 +9,16 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { IsPriceUnit } from '../../price-units/validators/is-price-unit.validator';
 
 export class UpdateMarketPriceDto {
   @IsOptional()
   @IsUUID()
   productId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  productOfferingId?: string;
 
   @IsOptional()
   @IsUUID()
@@ -30,8 +35,8 @@ export class UpdateMarketPriceDto {
   currency?: string;
 
   @IsOptional()
-  @IsEnum(PriceUnit)
-  unit?: PriceUnit;
+  @IsPriceUnit()
+  unit?: string;
 
   @IsOptional()
   @IsNumber()

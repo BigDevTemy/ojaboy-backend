@@ -1,13 +1,35 @@
-import {
-  PriceUnit,
-  Prisma,
-  ProductCategory,
-  ProductStatus,
-} from '@prisma/client';
+import { Prisma, ProductStatus } from '@prisma/client';
+
+const bagUnit = {
+  id: 'bag-unit-id',
+  code: 'bag',
+  label: 'Bag',
+  aliases: ['bags'],
+  packageType: 'bag',
+  sortOrder: 3,
+  isActive: true,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
 import * as XLSX from 'xlsx';
 import { ProductsService } from './products.service';
 
 describe('ProductsService', () => {
+  const grainsCategory = {
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'Grains',
+    slug: 'grains',
+  };
+  const oilsCategory = {
+    id: '22222222-2222-4222-8222-222222222222',
+    name: 'Oils',
+    slug: 'oils',
+  };
+  const legumesCategory = {
+    id: '33333333-3333-4333-8333-333333333333',
+    name: 'Legumes',
+    slug: 'legumes',
+  };
   function spreadsheetFile(rows: Record<string, unknown>[]) {
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.json_to_sheet(rows);
@@ -23,7 +45,8 @@ describe('ProductsService', () => {
       name: 'Local Rice',
       description: null,
       sku: 'PROD-GRA-RICE',
-      category: ProductCategory.Grains,
+      categoryId: grainsCategory.id,
+      category: grainsCategory,
       imageUrl: null,
       status: ProductStatus.active,
       createdAt: new Date(),
@@ -41,7 +64,8 @@ describe('ProductsService', () => {
           riskBuffer: new Prisma.Decimal(0),
           finalPrice: new Prisma.Decimal(72000),
           currency: 'NGN',
-          unit: PriceUnit.bag,
+          priceUnitId: bagUnit.id,
+          priceUnit: bagUnit,
           strategyUsed: 'cheapest',
           isActive: true,
           validFrom: new Date(),
@@ -78,7 +102,7 @@ describe('ProductsService', () => {
         id: product.id,
         availableUnits: [
           {
-            unit: PriceUnit.bag,
+            unit: bagUnit.code,
             currentPrice: 72000,
             currency: 'NGN',
             buyPriceId: 'rice-bag-price',
@@ -93,6 +117,9 @@ describe('ProductsService', () => {
     const createMany = jest.fn().mockResolvedValue({ count: 2 });
     const service = new ProductsService({
       product: { createMany },
+      productCategory: {
+        findMany: jest.fn().mockResolvedValue([grainsCategory, oilsCategory]),
+      },
     } as never);
 
     const result = await service.bulkUpload(
@@ -117,14 +144,12 @@ describe('ProductsService', () => {
         expect.objectContaining({
           name: 'Local Rice',
           sku: 'PROD-GRA-RICE',
-          category: ProductCategory.Grains,
-          status: ProductStatus.active,
+          categoryId: grainsCategory.id,
         }),
         expect.objectContaining({
           name: 'Palm Oil',
           sku: 'PROD-OIL-PALM',
-          category: ProductCategory.Oils,
-          status: ProductStatus.active,
+          categoryId: oilsCategory.id,
         }),
       ],
       skipDuplicates: true,
@@ -138,30 +163,57 @@ describe('ProductsService', () => {
     });
   });
 
-  it('creates a bulk upload template with product headers', () => {
-    const service = new ProductsService({} as never);
-    const workbook = XLSX.read(service.createBulkUploadTemplate(), {
+  it('creates a bulk upload template with current category references', async () => {
+    const service = new ProductsService({
+      productCategory: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { ...grainsCategory, description: 'Grain products', sortOrder: 10 },
+          ]),
+      },
+    } as never);
+    const workbook = XLSX.read(await service.createBulkUploadTemplate(), {
       type: 'buffer',
     });
     const rows = XLSX.utils.sheet_to_json<string[]>(workbook.Sheets.Products, {
       header: 1,
     });
+    const categories = XLSX.utils.sheet_to_json<string[]>(
+      workbook.Sheets.Categories,
+      { header: 1 },
+    );
 
     expect(rows[0]).toEqual([
       'name',
       'sku',
       'description',
-      'category',
+      'categorySlug',
       'imageUrl',
-      'status',
     ]);
     expect(rows[1]).toEqual([
       'Local Rice',
       'PROD-GRA-RICE',
       'Clean local rice sold by bag.',
-      ProductCategory.Grains,
+      'grains',
       '',
-      ProductStatus.active,
+    ]);
+    expect(categories[0]).toEqual([
+      'categoryId',
+      'name',
+      'slug',
+      'description',
+    ]);
+    expect(categories[1]).toEqual([
+      grainsCategory.id,
+      'Grains',
+      'grains',
+      'Grain products',
+    ]);
+    expect(workbook.SheetNames).toEqual([
+      'Products',
+      'Categories',
+      'Instructions',
     ]);
   });
 
@@ -169,6 +221,9 @@ describe('ProductsService', () => {
     const createMany = jest.fn().mockResolvedValue({ count: 1 });
     const service = new ProductsService({
       product: { createMany },
+      productCategory: {
+        findMany: jest.fn().mockResolvedValue([legumesCategory]),
+      },
     } as never);
 
     const result = await service.bulkUpload(
@@ -184,7 +239,7 @@ describe('ProductsService', () => {
         expect.objectContaining({
           name: 'Beans',
           sku: 'BEANS-001',
-          category: ProductCategory.Legumes,
+          categoryId: legumesCategory.id,
         }),
       ],
       skipDuplicates: true,
@@ -201,7 +256,7 @@ describe('ProductsService', () => {
       {
         row: 3,
         field: 'category',
-        message: 'Invalid category "Wrong Category"',
+        message: 'Active category "Wrong Category" was not found',
       },
     ]);
   });

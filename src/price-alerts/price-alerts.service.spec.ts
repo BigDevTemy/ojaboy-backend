@@ -2,7 +2,6 @@ import {
   PriceAlertCondition,
   PriceAlertFrequency,
   PriceAlertStatus,
-  PriceUnit,
   Prisma,
 } from '@prisma/client';
 import { PriceAlertsService } from './price-alerts.service';
@@ -17,13 +16,34 @@ describe('PriceAlertsService', () => {
     imageUrl: null,
     status: 'active',
   };
+  const offering = {
+    id: '22222222-2222-4222-8222-222222222222',
+    productId: product.id,
+    sku: 'RICE-MYCHOICE-SPECIAL-50KG',
+    isActive: true,
+    variant: { id: 'variant-id', name: 'Special Rice' },
+    brand: { id: 'brand-id', name: 'My Choice', manufacturer: null },
+    package: { id: 'package-id', name: '50 kg bag' },
+  };
+  const priceUnit = {
+    id: 'unit-id',
+    code: 'bag',
+    label: 'Bag',
+    aliases: ['bags'],
+    packageType: 'bag',
+    sortOrder: 3,
+    isActive: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
   const priceAlert = {
     id: 'alert-id',
     userId,
     productId: product.id,
+    productOfferingId: offering.id,
     targetPrice: new Prisma.Decimal(60000),
     currency: 'NGN',
-    unit: PriceUnit.bag,
+    priceUnitId: priceUnit.id,
     condition: PriceAlertCondition.at_or_below,
     frequency: PriceAlertFrequency.one_time,
     status: PriceAlertStatus.active,
@@ -33,22 +53,37 @@ describe('PriceAlertsService', () => {
     createdAt: new Date(),
     updatedAt: new Date(),
     product,
+    productOffering: offering,
+    priceUnit,
+  };
+  const priceUnitsService = {
+    requireByCode: jest.fn().mockResolvedValue(priceUnit),
   };
 
-  it('creates a user-owned price alert for an existing product', async () => {
+  it('creates a user-owned price alert for an exact offering', async () => {
     const create = jest.fn().mockResolvedValue(priceAlert);
-    const service = new PriceAlertsService({
-      product: { findUnique: jest.fn().mockResolvedValue({ id: product.id }) },
-      priceAlert: {
-        findFirst: jest.fn().mockResolvedValue(null),
-        create,
-      },
-    } as never);
+    const service = new PriceAlertsService(
+      {
+        productOffering: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: offering.id,
+            productId: product.id,
+            isActive: true,
+          }),
+        },
+        priceAlert: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create,
+        },
+      } as never,
+      priceUnitsService as never,
+    );
 
     const result = await service.create(userId, {
       productId: product.id,
+      productOfferingId: offering.id,
       targetPrice: 60000,
-      unit: PriceUnit.bag,
+      unit: 'bag',
     });
 
     expect(create).toHaveBeenCalledWith(
@@ -56,9 +91,10 @@ describe('PriceAlertsService', () => {
         data: expect.objectContaining({
           userId,
           productId: product.id,
+          productOfferingId: offering.id,
           targetPrice: 60000,
           currency: 'NGN',
-          unit: PriceUnit.bag,
+          priceUnitId: priceUnit.id,
           frequency: undefined,
         }),
       }),
@@ -75,11 +111,12 @@ describe('PriceAlertsService', () => {
     const findMany = jest.fn().mockResolvedValue([priceAlert]);
     const service = new PriceAlertsService({
       priceAlert: { findMany },
-    } as never);
+    } as never, priceUnitsService as never);
 
     const result = await service.findAll(userId, {
       status: PriceAlertStatus.active,
       productId: product.id,
+      productOfferingId: offering.id,
     });
 
     expect(findMany).toHaveBeenCalledWith(
@@ -87,6 +124,7 @@ describe('PriceAlertsService', () => {
         where: {
           userId,
           productId: product.id,
+          productOfferingId: offering.id,
           status: PriceAlertStatus.active,
         },
       }),
@@ -100,11 +138,18 @@ describe('PriceAlertsService', () => {
       status: PriceAlertStatus.paused,
     });
     const service = new PriceAlertsService({
+      productOffering: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: offering.id,
+          productId: product.id,
+          isActive: true,
+        }),
+      },
       priceAlert: {
         findFirst: jest.fn().mockResolvedValue(priceAlert),
         update,
       },
-    } as never);
+    } as never, priceUnitsService as never);
 
     const result = await service.update(userId, priceAlert.id, {
       status: PriceAlertStatus.paused,
@@ -130,7 +175,7 @@ describe('PriceAlertsService', () => {
         findFirst: jest.fn().mockResolvedValue(priceAlert),
         delete: deleteAlert,
       },
-    } as never);
+    } as never, priceUnitsService as never);
 
     const result = await service.remove(userId, priceAlert.id);
 
@@ -141,5 +186,111 @@ describe('PriceAlertsService', () => {
       message: 'Price alert deleted successfully.',
       deletedPriceAlertId: priceAlert.id,
     });
+  });
+
+  it('rejects an offering that belongs to another product', async () => {
+    const service = new PriceAlertsService({
+      productOffering: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: offering.id,
+          productId: 'different-product',
+          isActive: true,
+        }),
+      },
+    } as never, priceUnitsService as never);
+
+    await expect(
+      service.create(userId, {
+        productId: product.id,
+        productOfferingId: offering.id,
+        targetPrice: 60000,
+        unit: 'bag',
+      }),
+    ).rejects.toThrow(
+      'Product offering does not belong to the selected product',
+    );
+  });
+
+  it('triggers only alerts for the observed product offering', async () => {
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const createNotification = jest.fn().mockResolvedValue({
+      id: 'notification-id',
+    });
+    const service = new PriceAlertsService({
+      priceAlert: {
+        findMany: jest.fn().mockResolvedValue([priceAlert]),
+        updateMany,
+      },
+      notification: { create: createNotification },
+    } as never, priceUnitsService as never);
+    const observedAt = new Date('2026-06-24T08:00:00.000Z');
+
+    const result = await service.evaluateMarketPrice({
+      id: 'market-price-id',
+      productId: product.id,
+      productOfferingId: offering.id,
+      marketId: 'market-id',
+      amount: new Prisma.Decimal(59000),
+      currency: 'NGN',
+      priceUnitId: priceUnit.id,
+      quantity: new Prisma.Decimal(1),
+      qualityGrade: 'standard',
+      source: 'manual',
+      observedAt,
+      notes: null,
+      createdAt: observedAt,
+      updatedAt: observedAt,
+    });
+
+    expect(result).toEqual({ evaluated: 1, triggered: 1 });
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: priceAlert.id,
+          status: PriceAlertStatus.active,
+        }),
+        data: expect.objectContaining({
+          lastTriggeredAt: observedAt,
+          triggeredPrice: new Prisma.Decimal(59000),
+          status: PriceAlertStatus.triggered,
+        }),
+      }),
+    );
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId,
+          priceAlertId: priceAlert.id,
+          event: 'price_alert_triggered',
+        }),
+      }),
+    );
+  });
+
+  it('does not evaluate legacy market prices without an offering', async () => {
+    const findMany = jest.fn();
+    const service = new PriceAlertsService({
+      priceAlert: { findMany },
+    } as never, priceUnitsService as never);
+
+    const result = await service.evaluateMarketPrice({
+      id: 'legacy-market-price',
+      productId: product.id,
+      productOfferingId: null,
+      marketId: 'market-id',
+      amount: new Prisma.Decimal(59000),
+      currency: 'NGN',
+      priceUnitId: priceUnit.id,
+      quantity: new Prisma.Decimal(1),
+      qualityGrade: 'standard',
+      source: 'manual',
+      observedAt: new Date(),
+      notes: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    expect(result).toEqual({ evaluated: 0, triggered: 0 });
+    expect(findMany).not.toHaveBeenCalled();
   });
 });

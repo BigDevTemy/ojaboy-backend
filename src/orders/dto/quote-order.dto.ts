@@ -14,14 +14,32 @@ import {
 } from 'class-validator';
 import { QuoteAddressDto } from '../../addresses/dto/address-details.dto';
 
+/**
+ * Either a quantity-based item (buyPriceId + quantity, priced from the
+ * matching BuyPrice as usual) or an amount-based item (productId + amount,
+ * e.g. "N2000 tomatoes" from free-text parsing) - the customer states the
+ * total directly, so no per-unit price is looked up or calculated.
+ */
 export class QuoteOrderItemDto {
+  @ValidateIf((dto: QuoteOrderItemDto) => dto.amount === undefined)
   @IsUUID()
-  buyPriceId: string;
+  buyPriceId?: string;
 
+  @ValidateIf((dto: QuoteOrderItemDto) => dto.amount !== undefined)
+  @IsUUID()
+  productId?: string;
+
+  @ValidateIf((dto: QuoteOrderItemDto) => dto.amount === undefined)
   @Type(() => Number)
   @IsNumber()
   @Min(0.01)
-  quantity: number;
+  quantity?: number;
+
+  @ValidateIf((dto: QuoteOrderItemDto) => dto.quantity === undefined)
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  amount?: number;
 }
 
 export class QuoteOrderDto {

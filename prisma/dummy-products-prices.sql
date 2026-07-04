@@ -3,17 +3,17 @@ INSERT INTO products (
   name,
   description,
   sku,
-  category,
+  category_id,
   image_url,
   status,
   created_at,
   updated_at
 ) VALUES
-  ('d87961e7-e4c4-4031-8678-07574a27084d', 'Fresh Tomatoes', 'Fresh red tomatoes sold by basket.', 'PROD-VEG-TOM-001', 'Vegetables', NULL, 'active', NOW(), NOW()),
-  ('30d3f5cc-ac09-4e76-9c21-f5dc51dd0c57', 'Garri Ijebu', 'Clean white garri measured per derica.', 'PROD-GRA-GAR-001', 'Grains', NULL, 'active', NOW(), NOW()),
-  ('9a9ad4b1-d4e1-4b81-bd90-a4202a336aa3', 'Palm Oil', 'Quality palm oil measured per litre.', 'PROD-OIL-PAL-001', 'Oils', NULL, 'active', NOW(), NOW()),
-  ('1d6b69f8-0084-4fb5-9f29-939d6df6dd71', 'Local Rice', 'Clean local rice sold by bag.', 'PROD-GRA-RIC-001', 'Grains', NULL, 'active', NOW(), NOW()),
-  ('0e566a7b-9c7f-4e4a-ae03-8236e77d2d8e', 'Fresh Onions', 'Fresh onions sold by bag.', 'PROD-VEG-ONI-001', 'Vegetables', NULL, 'active', NOW(), NOW())
+  ('d87961e7-e4c4-4031-8678-07574a27084d', 'Fresh Tomatoes', 'Fresh red tomatoes sold by basket.', 'PROD-VEG-TOM-001', (SELECT id FROM product_categories WHERE slug = 'vegetables'), NULL, 'active', NOW(), NOW()),
+  ('30d3f5cc-ac09-4e76-9c21-f5dc51dd0c57', 'Garri Ijebu', 'Clean white garri measured per derica.', 'PROD-GRA-GAR-001', (SELECT id FROM product_categories WHERE slug = 'grains'), NULL, 'active', NOW(), NOW()),
+  ('9a9ad4b1-d4e1-4b81-bd90-a4202a336aa3', 'Palm Oil', 'Quality palm oil measured per litre.', 'PROD-OIL-PAL-001', (SELECT id FROM product_categories WHERE slug = 'oils'), NULL, 'active', NOW(), NOW()),
+  ('1d6b69f8-0084-4fb5-9f29-939d6df6dd71', 'Local Rice', 'Clean local rice sold by bag.', 'PROD-GRA-RIC-001', (SELECT id FROM product_categories WHERE slug = 'grains'), NULL, 'active', NOW(), NOW()),
+  ('0e566a7b-9c7f-4e4a-ae03-8236e77d2d8e', 'Fresh Onions', 'Fresh onions sold by bag.', 'PROD-VEG-ONI-001', (SELECT id FROM product_categories WHERE slug = 'vegetables'), NULL, 'active', NOW(), NOW())
 ON CONFLICT (sku) DO NOTHING;
 
 INSERT INTO market_prices (

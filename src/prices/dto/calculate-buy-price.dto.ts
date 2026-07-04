@@ -1,5 +1,6 @@
-import { BuyPriceStrategy, PriceUnit } from '@prisma/client';
+import { BuyPriceStrategy } from '@prisma/client';
 import { Type } from 'class-transformer';
+import { IsPriceUnit } from '../../price-units/validators/is-price-unit.validator';
 import {
   IsArray,
   IsBoolean,
@@ -27,8 +28,12 @@ export class CalculateBuyPriceDto {
   @IsUUID()
   productId: string;
 
-  @IsEnum(PriceUnit)
-  unit: PriceUnit;
+  @IsUUID()
+  productOfferingId: string;
+
+  @IsOptional()
+  @IsPriceUnit()
+  unit?: string;
 
   @IsEnum(BuyPriceStrategy)
   strategy: BuyPriceStrategy;

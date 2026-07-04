@@ -38,6 +38,8 @@ model User {
   assignedSupportTicketEvents  SupportTicketAssignment[]     @relation("SupportTicketNewAssignee")
   previousSupportTicketEvents  SupportTicketAssignment[]     @relation("SupportTicketPreviousAssignee")
   supportTicketAssignments     SupportTicketAssignment[]     @relation("SupportTicketAssignedBy")
+  createdAnnouncements         Announcement[]                @relation("AnnouncementCreatedBy")
+  announcementRecipients       AnnouncementRecipient[]
 
   @@map("users")
 }
@@ -153,6 +155,7 @@ model Market {
   deliveryCosts MarketDeliveryCost[]
   routesFrom    MarketRouteCost[]    @relation("MarketRouteFrom")
   routesTo      MarketRouteCost[]    @relation("MarketRouteTo")
+  analysisBenchmarks MarketAnalysisBenchmarkMarket[]
 
   @@map("markets")
 }
@@ -286,37 +289,39 @@ enum ProductStatus {
   out_of_stock
 }
 
-enum ProductCategory {
-  Fruits
-  Grains
-  Vegetables
-  Meat
-  Seafood
-  Dairy
-  Bakery
-  Beverages
-  Snacks
-  Spices
-  Oils
-  Legumes
-  Tubers
-  FrozenFoods
-  Household
-  PersonalCare
-  Other
+model PriceUnit {
+  id          String       @id @default(uuid())
+  code        String       @unique
+  label       String
+  aliases     String[]     @default([])
+  packageType PackageType? @map("package_type")
+  sortOrder   Int          @default(0) @map("sort_order")
+  isActive    Boolean      @default(true) @map("is_active")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  priceAlerts     PriceAlert[]
+  marketPrices    MarketPrice[]
+  buyPrices       BuyPrice[]
+  wishlistItems   WishlistItem[]
+  orderItems      OrderItem[]
+  productPackages ProductPackage[]
+
+  @@index([isActive])
+  @@map("price_units")
 }
 
-enum PriceUnit {
-  kg
+enum PackageType {
+  weight
+  volume
   bag
   basket
-  paint_bucket
+  bucket
   crate
-  litre
   bottle
   bunch
   piece
-  derica
+  other
 }
 
 enum PriceQualityGrade {
@@ -333,6 +338,19 @@ enum PriceSource {
   admin
 }
 
+enum MarketAnalysisSnapshotStatus {
+  processing
+  completed
+  failed
+}
+
+enum MarketAnalysisTrend {
+  up
+  down
+  unchanged
+  unavailable
+}
+
 enum BuyPriceStrategy {
   cheapest
   average
@@ -343,6 +361,18 @@ enum BuyPriceStrategy {
   fastest_fulfillment
   hybrid_landed_cost
   manual_override
+}
+
+enum BulkPriceJobMode {
+  calculate
+  generate
+}
+
+enum BulkPriceJobStatus {
+  pending
+  processing
+  completed
+  failed
 }
 
 enum PriceAlertCondition {
@@ -400,19 +430,196 @@ model Product {
   name          String
   description   String?
   sku           String           @unique
-  category      ProductCategory?
+  categoryId    String           @map("category_id")
   imageUrl      String?          @map("image_url")
   status        ProductStatus    @default(active)
   createdAt     DateTime         @default(now()) @map("created_at")
   updatedAt     DateTime         @updatedAt @map("updated_at")
+  category      ProductCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   marketPrices  MarketPrice[]
   buyPrices     BuyPrice[]
   orderItems    OrderItem[]
   wishlistItems WishlistItem[]
   priceAlerts   PriceAlert[]
+  variants      ProductVariant[]
+  offerings     ProductOffering[]
 
-  @@index([category])
+  @@index([categoryId])
   @@map("products")
+}
+
+model ProductCategory {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  slug        String    @unique
+  description String?
+  imageUrl    String?   @map("image_url")
+  isActive    Boolean   @default(true) @map("is_active")
+  sortOrder   Int       @default(0) @map("sort_order")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  products    Product[]
+
+  @@index([isActive, sortOrder])
+  @@map("product_categories")
+}
+
+model ProductVariant {
+  id        String            @id @default(uuid())
+  productId String            @map("product_id")
+  name      String
+  code      String
+  isActive  Boolean           @default(true) @map("is_active")
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+  product   Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  offerings ProductOffering[]
+
+  @@unique([productId, name])
+  @@unique([productId, code])
+  @@index([productId, isActive])
+  @@map("product_variants")
+}
+
+model Manufacturer {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  brands    Brand[]
+
+  @@index([isActive])
+  @@map("manufacturers")
+}
+
+model Brand {
+  id             String            @id @default(uuid())
+  manufacturerId String?           @map("manufacturer_id")
+  name           String            @unique
+  isActive       Boolean           @default(true) @map("is_active")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+  manufacturer   Manufacturer?     @relation(fields: [manufacturerId], references: [id], onDelete: SetNull)
+  offerings      ProductOffering[]
+
+  @@index([manufacturerId])
+  @@index([isActive])
+  @@map("brands")
+}
+
+model ProductPackage {
+  id          String            @id @default(uuid())
+  name        String            @unique
+  packageType PackageType       @map("package_type")
+  baseUnitId  String?           @map("base_unit_id")
+  quantity    Decimal?          @db.Decimal(12, 3)
+  isActive    Boolean           @default(true) @map("is_active")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  baseUnit    PriceUnit?        @relation(fields: [baseUnitId], references: [id], onDelete: Restrict)
+  offerings   ProductOffering[]
+
+  @@index([packageType])
+  @@index([isActive])
+  @@index([baseUnitId])
+  @@map("product_packages")
+}
+
+model ProductOffering {
+  id            String           @id @default(uuid())
+  productId     String           @map("product_id")
+  variantId     String?          @map("variant_id")
+  brandId       String?          @map("brand_id")
+  packageId     String           @map("package_id")
+  sku           String           @unique
+  isActive      Boolean          @default(true) @map("is_active")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+  product       Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant       ProductVariant?  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  brand         Brand?           @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  package       ProductPackage   @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  marketPrices  MarketPrice[]
+  buyPrices     BuyPrice[]
+  wishlistItems WishlistItem[]
+  priceAlerts   PriceAlert[]
+  orderItems    OrderItem[]
+  analysisBenchmarks MarketAnalysisBenchmark[]
+  analysisSnapshotItems MarketAnalysisSnapshotItem[]
+
+  @@unique([productId, variantId, brandId, packageId])
+  @@index([productId, isActive])
+  @@index([variantId])
+  @@index([brandId])
+  @@index([packageId])
+  @@map("product_offerings")
+}
+
+model MarketAnalysisBenchmark {
+  id                String                           @id @default(uuid())
+  productOfferingId String                           @unique @map("product_offering_id")
+  name              String
+  currency          String                           @default("NGN")
+  isActive          Boolean                          @default(true) @map("is_active")
+  createdAt         DateTime                         @default(now()) @map("created_at")
+  updatedAt         DateTime                         @updatedAt @map("updated_at")
+  productOffering   ProductOffering                  @relation(fields: [productOfferingId], references: [id], onDelete: Cascade)
+  markets           MarketAnalysisBenchmarkMarket[]
+
+  @@index([isActive])
+  @@map("market_analysis_benchmarks")
+}
+
+model MarketAnalysisBenchmarkMarket {
+  benchmarkId String                  @map("benchmark_id")
+  marketId    String                  @map("market_id")
+  benchmark   MarketAnalysisBenchmark @relation(fields: [benchmarkId], references: [id], onDelete: Cascade)
+  market      Market                  @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@id([benchmarkId, marketId])
+  @@index([marketId])
+  @@map("market_analysis_benchmark_markets")
+}
+
+model MarketAnalysisSnapshot {
+  id           String                       @id @default(uuid())
+  analysisDate DateTime                     @unique @map("analysis_date") @db.Date
+  status       MarketAnalysisSnapshotStatus @default(processing)
+  startedAt    DateTime                     @default(now()) @map("started_at")
+  completedAt  DateTime?                    @map("completed_at")
+  errorMessage String?                      @map("error_message")
+  createdAt    DateTime                     @default(now()) @map("created_at")
+  updatedAt    DateTime                     @updatedAt @map("updated_at")
+  items        MarketAnalysisSnapshotItem[]
+
+  @@index([status, analysisDate])
+  @@map("market_analysis_snapshots")
+}
+
+model MarketAnalysisSnapshotItem {
+  id                String                 @id @default(uuid())
+  snapshotId        String                 @map("snapshot_id")
+  productId         String                 @map("product_id")
+  productOfferingId String                 @map("product_offering_id")
+  productName       String                 @map("product_name")
+  variantName       String?                @map("variant_name")
+  brandName         String?                @map("brand_name")
+  packageName       String                 @map("package_name")
+  currentPrice      Decimal?               @map("current_price") @db.Decimal(12, 2)
+  previousPrice     Decimal?               @map("previous_price") @db.Decimal(12, 2)
+  changePercentage  Decimal?               @map("change_percentage") @db.Decimal(10, 2)
+  trend             MarketAnalysisTrend    @default(unavailable)
+  currency          String                 @default("NGN")
+  observationCount  Int                    @default(0) @map("observation_count")
+  lastPriceAt       DateTime?              @map("last_price_at")
+  createdAt         DateTime               @default(now()) @map("created_at")
+  snapshot          MarketAnalysisSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  productOffering   ProductOffering        @relation(fields: [productOfferingId], references: [id], onDelete: Restrict)
+
+  @@unique([snapshotId, productOfferingId])
+  @@index([productOfferingId])
+  @@map("market_analysis_snapshot_items")
 }
 
 model Notification {
@@ -459,9 +666,10 @@ model PriceAlert {
   id              String              @id @default(uuid())
   userId          String              @map("user_id")
   productId       String              @map("product_id")
+  productOfferingId String            @map("product_offering_id")
   targetPrice     Decimal             @map("target_price") @db.Decimal(12, 2)
   currency        String              @default("NGN")
-  unit            PriceUnit
+  priceUnitId     String              @map("price_unit_id")
   condition       PriceAlertCondition @default(at_or_below)
   frequency       PriceAlertFrequency @default(one_time)
   status          PriceAlertStatus    @default(active)
@@ -472,22 +680,27 @@ model PriceAlert {
   updatedAt       DateTime            @updatedAt @map("updated_at")
   user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   product         Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productOffering ProductOffering     @relation(fields: [productOfferingId], references: [id], onDelete: Cascade)
+  priceUnit       PriceUnit           @relation(fields: [priceUnitId], references: [id], onDelete: Restrict)
   notifications   Notification[]
 
   @@index([userId])
   @@index([productId])
+  @@index([productOfferingId])
   @@index([status])
-  @@index([productId, unit, status])
+  @@index([productOfferingId, status])
+  @@index([priceUnitId])
   @@map("price_alerts")
 }
 
 model MarketPrice {
   id           String            @id @default(uuid())
   productId    String            @map("product_id")
+  productOfferingId String?      @map("product_offering_id")
   marketId     String            @map("market_id")
   amount       Decimal           @db.Decimal(12, 2)
   currency     String            @default("NGN")
-  unit         PriceUnit
+  priceUnitId  String            @map("price_unit_id")
   quantity     Decimal           @default(1) @db.Decimal(12, 2)
   qualityGrade PriceQualityGrade @default(standard) @map("quality_grade")
   source       PriceSource       @default(manual)
@@ -497,18 +710,24 @@ model MarketPrice {
   updatedAt    DateTime          @updatedAt @map("updated_at")
   market       Market            @relation(fields: [marketId], references: [id], onDelete: Cascade)
   product      Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productOffering ProductOffering? @relation(fields: [productOfferingId], references: [id], onDelete: SetNull)
+  priceUnit    PriceUnit         @relation(fields: [priceUnitId], references: [id], onDelete: Restrict)
   buyPrices    BuyPrice[]
 
-  @@unique([productId, marketId, unit, observedAt])
   @@index([productId])
+  @@index([productOfferingId])
+  @@index([productId, marketId, priceUnitId, observedAt], map: "market_prices_prod_market_unit_observed_idx")
+  @@index([productOfferingId, marketId, observedAt])
   @@index([marketId])
   @@index([observedAt])
+  @@index([priceUnitId])
   @@map("market_prices")
 }
 
 model BuyPrice {
   id              String           @id @default(uuid())
   productId       String           @map("product_id")
+  productOfferingId String?        @map("product_offering_id")
   marketId        String?          @map("market_id")
   marketPriceId   String?          @map("market_price_id")
   baseMarketPrice Decimal          @map("base_market_price") @db.Decimal(12, 2)
@@ -517,7 +736,7 @@ model BuyPrice {
   riskBuffer      Decimal          @default(0) @map("risk_buffer") @db.Decimal(12, 2)
   finalPrice      Decimal          @map("final_price") @db.Decimal(12, 2)
   currency        String           @default("NGN")
-  unit            PriceUnit
+  priceUnitId     String           @map("price_unit_id")
   strategyUsed    BuyPriceStrategy @default(cheapest) @map("strategy_used")
   isActive        Boolean          @default(true) @map("is_active")
   validFrom       DateTime         @default(now()) @map("valid_from")
@@ -527,14 +746,43 @@ model BuyPrice {
   market          Market?          @relation(fields: [marketId], references: [id], onDelete: SetNull)
   marketPrice     MarketPrice?     @relation(fields: [marketPriceId], references: [id], onDelete: SetNull)
   product         Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productOffering ProductOffering? @relation(fields: [productOfferingId], references: [id], onDelete: SetNull)
+  priceUnit       PriceUnit        @relation(fields: [priceUnitId], references: [id], onDelete: Restrict)
   orderItems      OrderItem[]
 
   @@index([productId])
+  @@index([productOfferingId])
   @@index([marketId])
   @@index([marketPriceId])
   @@index([isActive])
   @@index([strategyUsed])
+  @@index([priceUnitId])
   @@map("buy_prices")
+}
+
+// Tracks a bulk buy-price calculate/generate request processed in small
+// resumable batches (see BULK_CALCULATION_CONCURRENCY in prices.service.ts)
+// instead of one long synchronous call, so the frontend can drive it
+// forward batch-by-batch and show live progress instead of a request that
+// blocks for a minute or more.
+model BulkPriceJob {
+  id               String              @id @default(uuid())
+  mode             BulkPriceJobMode
+  status           BulkPriceJobStatus  @default(pending)
+  strategy         BuyPriceStrategy
+  requestParams    Json                @map("request_params")
+  targets          Json
+  totalTargets     Int                 @map("total_targets")
+  processedTargets Int                 @default(0) @map("processed_targets")
+  results          Json                @default("[]")
+  errorMessage     String?             @map("error_message")
+  startedAt        DateTime?           @map("started_at")
+  completedAt      DateTime?           @map("completed_at")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("bulk_price_jobs")
 }
 
 enum OrderStatus {
@@ -549,6 +797,11 @@ enum OrderStatus {
 enum OrderPaymentStatus {
   pending
   paid
+}
+
+enum OrderItemPricingMode {
+  unit
+  amount
 }
 
 enum CouponDiscountType {
@@ -727,16 +980,22 @@ model WishlistItem {
   id         String    @id @default(uuid())
   wishlistId String    @map("wishlist_id")
   productId  String    @map("product_id")
+  productOfferingId String? @map("product_offering_id")
   quantity   Decimal   @db.Decimal(12, 2)
-  unit       PriceUnit
+  priceUnitId String   @map("price_unit_id")
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
   wishlist   Wishlist  @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
   product    Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productOffering ProductOffering? @relation(fields: [productOfferingId], references: [id], onDelete: SetNull)
+  priceUnit  PriceUnit @relation(fields: [priceUnitId], references: [id], onDelete: Restrict)
 
-  @@unique([wishlistId, productId, unit])
   @@index([wishlistId])
   @@index([productId])
+  @@index([productOfferingId])
+  @@index([wishlistId, productId, priceUnitId])
+  @@index([wishlistId, productOfferingId])
+  @@index([priceUnitId])
   @@map("wishlist_items")
 }
 
@@ -872,20 +1131,32 @@ model OrderItem {
   id         String    @id @default(uuid())
   orderId    String    @map("order_id")
   productId  String    @map("product_id")
+  productOfferingId String? @map("product_offering_id")
   buyPriceId String?   @map("buy_price_id")
-  quantity   Decimal   @db.Decimal(12, 2)
-  unit       PriceUnit
-  unitPrice  Decimal   @map("unit_price") @db.Decimal(12, 2)
+  productName String?  @map("product_name")
+  variantName String?  @map("variant_name")
+  brandName   String?  @map("brand_name")
+  packageName String?  @map("package_name")
+  offeringSku String?  @map("offering_sku")
+  pricingMode OrderItemPricingMode @default(unit) @map("pricing_mode")
+  quantity   Decimal?  @db.Decimal(12, 2)
+  priceUnitId String?  @map("price_unit_id")
+  unitPrice  Decimal?  @map("unit_price") @db.Decimal(12, 2)
   totalPrice Decimal   @map("total_price") @db.Decimal(12, 2)
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
   buyPrice   BuyPrice? @relation(fields: [buyPriceId], references: [id], onDelete: SetNull)
   order      Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product    Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productOffering ProductOffering? @relation(fields: [productOfferingId], references: [id], onDelete: SetNull)
+  priceUnit  PriceUnit? @relation(fields: [priceUnitId], references: [id], onDelete: Restrict)
 
   @@index([orderId])
   @@index([productId])
+  @@index([productOfferingId])
+  @@index([pricingMode])
   @@index([buyPriceId])
+  @@index([priceUnitId])
   @@map("order_items")
 }
 
@@ -976,4 +1247,82 @@ model WebhookLog {
   @@index([reference])
   @@index([receivedAt])
   @@map("webhook_logs")
+}
+
+enum AnnouncementType {
+  closure
+  coupon
+  promotion
+  custom
+}
+
+enum AnnouncementAudienceType {
+  all
+  role
+  specific_users
+}
+
+enum AnnouncementStatus {
+  draft
+  scheduled
+  sending
+  sent
+  partially_failed
+  cancelled
+}
+
+enum AnnouncementRecipientStatus {
+  pending
+  processing
+  sent
+  failed
+}
+
+model Announcement {
+  id                String                    @id @default(uuid())
+  type              AnnouncementType
+  title             String
+  body              String
+  emailTemplate     String                    @map("email_template")
+  templateVariables Json?                     @map("template_variables")
+  audienceType      AnnouncementAudienceType  @map("audience_type")
+  audienceRole      String?                   @map("audience_role")
+  audienceUserIds   String[]                  @default([]) @map("audience_user_ids")
+  status            AnnouncementStatus        @default(draft)
+  scheduledAt       DateTime?                 @map("scheduled_at")
+  publishedAt       DateTime?                 @map("published_at")
+  completedAt       DateTime?                 @map("completed_at")
+  totalRecipients   Int                       @default(0) @map("total_recipients")
+  sentCount         Int                       @default(0) @map("sent_count")
+  failedCount       Int                       @default(0) @map("failed_count")
+  createdByUserId   String?                   @map("created_by_user_id")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  updatedAt         DateTime                  @updatedAt @map("updated_at")
+  createdBy         User?                     @relation("AnnouncementCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  recipients        AnnouncementRecipient[]
+
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([type])
+  @@map("announcements")
+}
+
+model AnnouncementRecipient {
+  id             String                      @id @default(uuid())
+  announcementId String                      @map("announcement_id")
+  userId         String                      @map("user_id")
+  status         AnnouncementRecipientStatus @default(pending)
+  attempts       Int                         @default(0)
+  nextAttemptAt  DateTime                    @default(now()) @map("next_attempt_at")
+  lastError      String?                     @map("last_error")
+  sentAt         DateTime?                   @map("sent_at")
+  createdAt      DateTime                    @default(now()) @map("created_at")
+  updatedAt      DateTime                    @updatedAt @map("updated_at")
+  announcement   Announcement                @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId])
+  @@index([status, nextAttemptAt])
+  @@index([userId])
+  @@map("announcement_recipients")
 }

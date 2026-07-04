@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
+import { useContainer } from 'class-validator';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 
@@ -21,6 +22,8 @@ async function bootstrap() {
   });
 
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  // Allow class-validator to resolve DI-backed constraints (e.g. @IsPriceUnit).
+  useContainer(app.select(AppModule), { fallbackOnErrors: true });
   app.useLogger(app.get(Logger));
   app.use(helmet());
   app.enableCors({

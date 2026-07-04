@@ -1,4 +1,5 @@
-import { BuyPriceStrategy, PriceUnit } from '@prisma/client';
+import { BuyPriceStrategy } from '@prisma/client';
+import { IsPriceUnit } from '../../price-units/validators/is-price-unit.validator';
 import {
   IsBoolean,
   IsDateString,
@@ -14,6 +15,9 @@ import {
 export class CreatePriceDto {
   @IsUUID()
   productId: string;
+
+  @IsUUID()
+  productOfferingId: string;
 
   @IsOptional()
   @IsUUID()
@@ -52,8 +56,9 @@ export class CreatePriceDto {
   @MinLength(3)
   currency?: string;
 
-  @IsEnum(PriceUnit)
-  unit: PriceUnit;
+  @IsOptional()
+  @IsPriceUnit()
+  unit?: string;
 
   @IsOptional()
   @IsEnum(BuyPriceStrategy)

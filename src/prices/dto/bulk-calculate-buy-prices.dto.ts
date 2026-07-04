@@ -1,9 +1,6 @@
-import {
-  BuyPriceStrategy,
-  PriceUnit,
-  ProductCategory,
-} from '@prisma/client';
+import { BuyPriceStrategy } from '@prisma/client';
 import { Type } from 'class-transformer';
+import { IsPriceUnit } from '../../price-units/validators/is-price-unit.validator';
 import {
   IsArray,
   IsBoolean,
@@ -37,12 +34,17 @@ export class BulkCalculateBuyPricesDto {
   productIds?: string[];
 
   @IsOptional()
-  @IsEnum(ProductCategory)
-  category?: ProductCategory;
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  productOfferingIds?: string[];
 
   @IsOptional()
-  @IsEnum(PriceUnit)
-  unit?: PriceUnit;
+  @IsUUID()
+  categoryId?: string;
+
+  @IsOptional()
+  @IsPriceUnit()
+  unit?: string;
 
   @IsOptional()
   @IsUUID()

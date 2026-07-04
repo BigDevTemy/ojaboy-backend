@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, ProductCategory, ProductStatus } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -24,23 +24,41 @@ type ProductWithPriceOptions = Prisma.ProductGetPayload<{
         market: {
           select: { id: true; marketname: true; marketaddress: true };
         };
+        priceUnit: true;
       };
     };
+    variants: true;
+    offerings: {
+      include: {
+        variant: true;
+        brand: {
+          include: { manufacturer: true };
+        };
+        package: true;
+      };
+    };
+    category: true;
   };
 }>;
 
 type ProductFilters = {
   search?: string;
-  category?: ProductCategory;
+  categoryId?: string;
   limit?: string;
   offset?: string;
 };
 
-type BulkProductRow = Partial<Record<keyof CreateProductDto, string>>;
+type BulkProductRow = Partial<{
+  name: string;
+  sku: string;
+  description: string;
+  category: string;
+  imageUrl: string;
+}>;
 
 type BulkProductError = {
   row: number;
-  field?: keyof CreateProductDto | 'file';
+  field?: keyof BulkProductRow | 'file';
   message: string;
 };
 
@@ -51,9 +69,8 @@ const PRODUCT_BULK_UPLOAD_HEADERS = [
   'name',
   'sku',
   'description',
-  'category',
+  'categorySlug',
   'imageUrl',
-  'status',
 ] as const;
 
 @Injectable()
@@ -61,9 +78,10 @@ export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(createProductDto: CreateProductDto) {
+    await this.requireActiveCategory(createProductDto.categoryId);
     const product = await this.prisma.product.create({
       data: this.toProductData(createProductDto),
-      include: { marketPrices: true, buyPrices: true },
+      include: { category: true, marketPrices: true, buyPrices: true },
     });
 
     return {
@@ -91,13 +109,29 @@ export class ProductsService {
       );
     }
 
+    const categories = await this.prisma.productCategory.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, slug: true },
+    });
+    const categoriesByKey = new Map(
+      categories.flatMap((category) => [
+        [category.id.toLowerCase(), category],
+        [category.name.toLowerCase(), category],
+        [category.slug.toLowerCase(), category],
+      ]),
+    );
     const seenSkus = new Set<string>();
     const errors: BulkProductError[] = [];
     const products: CreateProductDto[] = [];
 
     rows.forEach((row, index) => {
       const rowNumber = index + 2;
-      const product = this.toBulkProduct(row, rowNumber, errors);
+      const product = this.toBulkProduct(
+        row,
+        rowNumber,
+        errors,
+        categoriesByKey,
+      );
 
       if (!product) return;
 
@@ -147,30 +181,95 @@ export class ProductsService {
     };
   }
 
-  createBulkUploadTemplate(): Buffer {
+  async createBulkUploadTemplate(): Promise<Buffer> {
+    const categories = await this.prisma.productCategory.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        sortOrder: true,
+      },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
     const workbook = XLSX.utils.book_new();
-    const sheet = XLSX.utils.aoa_to_sheet([
+    const productSheet = XLSX.utils.aoa_to_sheet([
       [...PRODUCT_BULK_UPLOAD_HEADERS],
       [
         'Local Rice',
         'PROD-GRA-RICE',
         'Clean local rice sold by bag.',
-        ProductCategory.Grains,
+        'grains',
         '',
-        ProductStatus.active,
+      ],
+      [
+        'Fresh Tomatoes',
+        'PROD-VEG-TOMATOES',
+        'Fresh tomatoes.',
+        'vegetables',
+        '',
       ],
     ]);
 
-    sheet['!cols'] = [
+    productSheet['!cols'] = [
       { wch: 24 },
       { wch: 22 },
       { wch: 40 },
-      { wch: 18 },
+      { wch: 24 },
       { wch: 36 },
-      { wch: 16 },
     ];
+    productSheet['!autofilter'] = { ref: 'A1:E3' };
 
-    XLSX.utils.book_append_sheet(workbook, sheet, 'Products');
+    XLSX.utils.book_append_sheet(workbook, productSheet, 'Products');
+
+    const categorySheet = XLSX.utils.aoa_to_sheet([
+      ['categoryId', 'name', 'slug', 'description'],
+      ...categories.map((category) => [
+        category.id,
+        category.name,
+        category.slug,
+        category.description ?? '',
+      ]),
+    ]);
+    categorySheet['!cols'] = [
+      { wch: 38 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 60 },
+    ];
+    if (categories.length) {
+      categorySheet['!autofilter'] = {
+        ref: `A1:D${categories.length + 1}`,
+      };
+    }
+    XLSX.utils.book_append_sheet(workbook, categorySheet, 'Categories');
+
+    const instructionSheet = XLSX.utils.aoa_to_sheet([
+      ['Column', 'Required', 'Instructions'],
+      ['name', 'Yes', 'Base product name, for example Tomatoes or Rice.'],
+      ['sku', 'Yes', 'Unique product SKU.'],
+      ['description', 'No', 'Optional product description.'],
+      [
+        'categorySlug',
+        'Yes',
+        'Use an active slug from the Categories sheet. A category ID or exact category name is also accepted.',
+      ],
+      ['imageUrl', 'No', 'Optional valid image URL.'],
+      [],
+      ['Important'],
+      [
+        'This template creates base products only. Variants, brands, packages, offerings and prices are managed after the base product exists or through the catalogue-specific bulk workflow.',
+      ],
+      [
+        'Product status is not accepted during creation. New products use the backend active default.',
+      ],
+      [
+        'Do not add duplicate SKUs. Rows with unknown or inactive categories are rejected.',
+      ],
+    ]);
+    instructionSheet['!cols'] = [{ wch: 24 }, { wch: 12 }, { wch: 105 }];
+    XLSX.utils.book_append_sheet(workbook, instructionSheet, 'Instructions');
 
     return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
   }
@@ -194,8 +293,8 @@ export class ProductsService {
     };
   }
 
-  async findByCategory(category: ProductCategory) {
-    return this.findAll({ category });
+  async findByCategory(categoryId: string) {
+    return this.findAll({ categoryId });
   }
 
   async findOne(id: string) {
@@ -213,11 +312,14 @@ export class ProductsService {
   }
 
   async update(id: string, updateProductDto: UpdateProductDto) {
+    if (updateProductDto.categoryId) {
+      await this.requireActiveCategory(updateProductDto.categoryId);
+    }
     try {
       const product = await this.prisma.product.update({
         where: { id },
         data: this.toUpdateData(updateProductDto),
-        include: { marketPrices: true, buyPrices: true },
+        include: { category: true, marketPrices: true, buyPrices: true },
       });
 
       return {
@@ -265,9 +367,8 @@ export class ProductsService {
       name: dto.name.trim(),
       description: dto.description?.trim(),
       sku: dto.sku.trim(),
-      category: dto.category,
+      categoryId: dto.categoryId,
       imageUrl: dto.imageUrl?.trim(),
-      status: dto.status,
     };
   }
 
@@ -311,21 +412,22 @@ export class ProductsService {
     return normalized;
   }
 
-  private toProductField(header: string): keyof CreateProductDto | undefined {
+  private toProductField(header: string): keyof BulkProductRow | undefined {
     const key = header
       .trim()
       .toLowerCase()
       .replace(/[\s_-]+/g, '');
-    const fields: Record<string, keyof CreateProductDto> = {
+    const fields: Record<string, keyof BulkProductRow> = {
       name: 'name',
       productname: 'name',
       description: 'description',
       desc: 'description',
       sku: 'sku',
       category: 'category',
+      categoryid: 'category',
+      categoryslug: 'category',
       imageurl: 'imageUrl',
       image: 'imageUrl',
-      status: 'status',
     };
 
     return fields[key];
@@ -335,6 +437,7 @@ export class ProductsService {
     row: BulkProductRow,
     rowNumber: number,
     errors: BulkProductError[],
+    categoriesByKey: Map<string, { id: string; name: string; slug: string }>,
   ): CreateProductDto | undefined {
     const name = row.name?.trim();
     const sku = row.sku?.trim();
@@ -360,26 +463,16 @@ export class ProductsService {
     }
 
     const category = row.category
-      ? this.parseEnumValue(ProductCategory, row.category)
-      : undefined;
-    const status = row.status
-      ? this.parseEnumValue(ProductStatus, row.status)
+      ? categoriesByKey.get(row.category.trim().toLowerCase())
       : undefined;
 
-    if (row.category && !category) {
+    if (!row.category || !category) {
       errors.push({
         row: rowNumber,
         field: 'category',
-        message: `Invalid category "${row.category}"`,
-      });
-      return undefined;
-    }
-
-    if (row.status && !status) {
-      errors.push({
-        row: rowNumber,
-        field: 'status',
-        message: `Invalid status "${row.status}"`,
+        message: row.category
+          ? `Active category "${row.category}" was not found`
+          : 'Category is required',
       });
       return undefined;
     }
@@ -397,20 +490,9 @@ export class ProductsService {
       name,
       sku,
       description: row.description || undefined,
-      category,
+      categoryId: category.id,
       imageUrl: row.imageUrl || undefined,
-      status,
     };
-  }
-
-  private parseEnumValue<T extends Record<string, string>>(
-    values: T,
-    value: string,
-  ): T[keyof T] | undefined {
-    const normalized = value.trim().toLowerCase();
-    return Object.values(values).find(
-      (candidate) => candidate.toLowerCase() === normalized,
-    ) as T[keyof T] | undefined;
   }
 
   private isUrl(value: string): boolean {
@@ -429,7 +511,7 @@ export class ProductsService {
       name: dto.name?.trim(),
       description: dto.description?.trim(),
       sku: dto.sku?.trim(),
-      category: dto.category,
+      categoryId: dto.categoryId,
       imageUrl: dto.imageUrl?.trim(),
       status: dto.status,
     };
@@ -439,7 +521,7 @@ export class ProductsService {
     const search = filters.search?.trim();
 
     return {
-      category: filters.category,
+      categoryId: filters.categoryId,
       OR: search
         ? [
             { name: { contains: search, mode: 'insensitive' } },
@@ -461,6 +543,7 @@ export class ProductsService {
           },
         },
       },
+      category: true,
       buyPrices: {
         where: {
           isActive: true,
@@ -472,7 +555,19 @@ export class ProductsService {
           market: {
             select: { id: true, marketname: true, marketaddress: true },
           },
+          priceUnit: true,
         },
+      },
+      variants: {
+        orderBy: { name: 'asc' },
+      },
+      offerings: {
+        include: {
+          variant: true,
+          brand: { include: { manufacturer: true } },
+          package: true,
+        },
+        orderBy: { sku: 'asc' },
       },
     } satisfies Prisma.ProductInclude;
   }
@@ -484,15 +579,16 @@ export class ProductsService {
     >();
 
     for (const price of product.buyPrices) {
-      if (!priceByUnit.has(price.unit)) {
-        priceByUnit.set(price.unit, price);
+      if (!priceByUnit.has(price.priceUnit.code)) {
+        priceByUnit.set(price.priceUnit.code, price);
       }
     }
 
     return {
       ...product,
+      availableOfferings: product.offerings ?? [],
       availableUnits: [...priceByUnit.values()].map((price) => ({
-        unit: price.unit,
+        unit: price.priceUnit.code,
         currentPrice: this.toNumber(price.finalPrice),
         currency: price.currency,
         buyPriceId: price.id,
@@ -552,6 +648,19 @@ export class ProductsService {
 
   private toNumber(value: Prisma.Decimal | number): number {
     return typeof value === 'number' ? value : value.toNumber();
+  }
+
+  private async requireActiveCategory(categoryId: string) {
+    const category = await this.prisma.productCategory.findUnique({
+      where: { id: categoryId },
+      select: { id: true, isActive: true },
+    });
+    if (!category) {
+      throw new NotFoundException('Product category not found');
+    }
+    if (!category.isActive) {
+      throw new BadRequestException('Product category is not active');
+    }
   }
 
   private isTransientConnectionError(error: unknown): boolean {

@@ -139,22 +139,22 @@ INSERT INTO products (
   name,
   description,
   sku,
-  category,
+  category_id,
   image_url,
   status,
   created_at,
   updated_at
 ) VALUES
-  ('d87961e7-e4c4-4031-8678-07574a27084d', 'Fresh Tomatoes', 'Fresh red tomatoes sold by basket.', 'PROD-VEG-TOM-001', 'Vegetables', NULL, 'active', NOW(), NOW()),
-  ('30d3f5cc-ac09-4e76-9c21-f5dc51dd0c57', 'Garri Ijebu', 'Clean white garri measured per derica.', 'PROD-GRA-GAR-001', 'Grains', NULL, 'active', NOW(), NOW()),
-  ('9a9ad4b1-d4e1-4b81-bd90-a4202a336aa3', 'Palm Oil', 'Quality palm oil measured per litre.', 'PROD-OIL-PAL-001', 'Oils', NULL, 'active', NOW(), NOW()),
-  ('1d6b69f8-0084-4fb5-9f29-939d6df6dd71', 'Local Rice', 'Clean local rice sold by bag.', 'PROD-GRA-RIC-001', 'Grains', NULL, 'active', NOW(), NOW()),
-  ('0e566a7b-9c7f-4e4a-ae03-8236e77d2d8e', 'Fresh Onions', 'Fresh onions sold by bag.', 'PROD-VEG-ONI-001', 'Vegetables', NULL, 'active', NOW(), NOW()),
-  ('30d3f5cc-ac09-4e76-9c21-f5dc51dd0c58', 'Beans Oloyin', 'Sweet honey beans measured per paint bucket.', 'PROD-LEG-BEA-001', 'Legumes', NULL, 'active', NOW(), NOW()),
-  ('2d56d7b0-3a31-42e7-a9ef-b860d993ff01', 'Sweet Oranges', 'Fresh sweet oranges sold by basket.', 'PROD-FRU-ORG-001', 'Fruits', NULL, 'active', NOW(), NOW()),
-  ('e1547ca5-59d3-445d-b5f6-9228d2e04af9', 'Ripe Plantain', 'Ripe yellow plantain bunches.', 'PROD-TUB-PLA-001', 'Tubers', NULL, 'active', NOW(), NOW()),
-  ('6cdd7e76-3244-4417-8bb4-2f1c3db50d0a', 'Red Pepper', 'Fresh red pepper for stew and soups.', 'PROD-VEG-PEP-001', 'Vegetables', NULL, 'active', NOW(), NOW()),
-  ('57264733-99b8-46b7-84ee-5a855dc6dc9f', 'Irish Potatoes', 'Clean Irish potatoes sold by bag.', 'PROD-TUB-POT-001', 'Tubers', NULL, 'active', NOW(), NOW())
+  ('d87961e7-e4c4-4031-8678-07574a27084d', 'Fresh Tomatoes', 'Fresh red tomatoes sold by basket.', 'PROD-VEG-TOM-001', (SELECT id FROM product_categories WHERE slug = 'vegetables'), NULL, 'active', NOW(), NOW()),
+  ('30d3f5cc-ac09-4e76-9c21-f5dc51dd0c57', 'Garri Ijebu', 'Clean white garri measured per derica.', 'PROD-GRA-GAR-001', (SELECT id FROM product_categories WHERE slug = 'grains'), NULL, 'active', NOW(), NOW()),
+  ('9a9ad4b1-d4e1-4b81-bd90-a4202a336aa3', 'Palm Oil', 'Quality palm oil measured per litre.', 'PROD-OIL-PAL-001', (SELECT id FROM product_categories WHERE slug = 'oils'), NULL, 'active', NOW(), NOW()),
+  ('1d6b69f8-0084-4fb5-9f29-939d6df6dd71', 'Local Rice', 'Clean local rice sold by bag.', 'PROD-GRA-RIC-001', (SELECT id FROM product_categories WHERE slug = 'grains'), NULL, 'active', NOW(), NOW()),
+  ('0e566a7b-9c7f-4e4a-ae03-8236e77d2d8e', 'Fresh Onions', 'Fresh onions sold by bag.', 'PROD-VEG-ONI-001', (SELECT id FROM product_categories WHERE slug = 'vegetables'), NULL, 'active', NOW(), NOW()),
+  ('30d3f5cc-ac09-4e76-9c21-f5dc51dd0c58', 'Beans Oloyin', 'Sweet honey beans measured per paint bucket.', 'PROD-LEG-BEA-001', (SELECT id FROM product_categories WHERE slug = 'legumes'), NULL, 'active', NOW(), NOW()),
+  ('2d56d7b0-3a31-42e7-a9ef-b860d993ff01', 'Sweet Oranges', 'Fresh sweet oranges sold by basket.', 'PROD-FRU-ORG-001', (SELECT id FROM product_categories WHERE slug = 'fruits'), NULL, 'active', NOW(), NOW()),
+  ('e1547ca5-59d3-445d-b5f6-9228d2e04af9', 'Ripe Plantain', 'Ripe yellow plantain bunches.', 'PROD-TUB-PLA-001', (SELECT id FROM product_categories WHERE slug = 'tubers'), NULL, 'active', NOW(), NOW()),
+  ('6cdd7e76-3244-4417-8bb4-2f1c3db50d0a', 'Red Pepper', 'Fresh red pepper for stew and soups.', 'PROD-VEG-PEP-001', (SELECT id FROM product_categories WHERE slug = 'vegetables'), NULL, 'active', NOW(), NOW()),
+  ('57264733-99b8-46b7-84ee-5a855dc6dc9f', 'Irish Potatoes', 'Clean Irish potatoes sold by bag.', 'PROD-TUB-POT-001', (SELECT id FROM product_categories WHERE slug = 'tubers'), NULL, 'active', NOW(), NOW())
 ON CONFLICT (sku) DO NOTHING;
 
 INSERT INTO market_prices (

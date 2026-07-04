@@ -1,18 +1,66 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { UserListQueryDto } from './dto/user-list-query.dto';
 
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll() {
-    const users = await this.prisma.user.findMany({
-      select: this.userSelect(),
-      orderBy: { createdAt: 'desc' },
-    });
+  async findAll(
+    actor: AuthUser,
+    query: UserListQueryDto = new UserListQueryDto(),
+  ) {
+    this.assertAdmin(actor);
 
-    return { data: users };
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 50;
+    const search = query.search?.trim();
+    const role = query.role ?? 'user';
+
+    const where: Prisma.UserWhereInput = {
+      role,
+      ...(search
+        ? {
+            OR: [
+              { fullName: { contains: search, mode: 'insensitive' as const } },
+              { email: { contains: search, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+    };
+
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        select: {
+          ...this.userSelect(),
+          _count: { select: { orders: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return {
+      data: users.map(({ _count, ...user }) => ({
+        ...user,
+        orderCount: _count.orders,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 
   async findByEmail(email: string) {
@@ -71,6 +119,12 @@ export class UsersService {
     }
 
     return { user, order };
+  }
+
+  private assertAdmin(user: AuthUser) {
+    if (!['admin', 'superadmin'].includes(user.role)) {
+      throw new ForbiddenException('Only admins can view customer accounts');
+    }
   }
 
   private normalizeEmail(email: string) {

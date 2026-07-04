@@ -13,7 +13,6 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
-import { ProductCategory } from '@prisma/client';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -35,8 +34,8 @@ export class ProductsController {
   }
 
   @Get('bulk-upload/template')
-  downloadBulkUploadTemplate(@Res() response: Response) {
-    const template = this.productsService.createBulkUploadTemplate();
+  async downloadBulkUploadTemplate(@Res() response: Response) {
+    const template = await this.productsService.createBulkUploadTemplate();
 
     response.setHeader(
       'Content-Type',
@@ -52,16 +51,16 @@ export class ProductsController {
   @Get()
   findAll(
     @Query('search') search?: string,
-    @Query('category') category?: ProductCategory,
+    @Query('categoryId') categoryId?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
-    return this.productsService.findAll({ search, category, limit, offset });
+    return this.productsService.findAll({ search, categoryId, limit, offset });
   }
 
-  @Get('category/:category')
-  findByCategory(@Param('category') category: ProductCategory) {
-    return this.productsService.findByCategory(category);
+  @Get('category/:categoryId')
+  findByCategory(@Param('categoryId') categoryId: string) {
+    return this.productsService.findByCategory(categoryId);
   }
 
   @Get(':id')

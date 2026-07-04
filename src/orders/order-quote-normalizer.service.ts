@@ -1,12 +1,40 @@
-import { Injectable } from '@nestjs/common';
-import { BuyPrice, Prisma, Product, ProductStatus } from '@prisma/client';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BuyPrice,
+  PriceUnit,
+  Prisma,
+  Product,
+  ProductStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { PriceUnitsService } from '../price-units/price-units.service';
+import { PriceUnitLookup } from '../price-units/price-unit-lookup';
 import { QuoteOrderItemDto } from './dto/quote-order.dto';
+import { ResolveQuoteChoiceDto } from './dto/resolve-quote-choice.dto';
 
-type CatalogPrice = BuyPrice & { product: Product };
+type CatalogPrice = BuyPrice & {
+  product: Product;
+  productOffering?: {
+    id: string;
+    sku: string;
+    variant: { id: string; name: string } | null;
+    brand: { id: string; name: string } | null;
+    package: { id: string; name: string };
+  } | null;
+  priceUnit: PriceUnit;
+};
+
+export type NormalizedQuoteChoice = {
+  buyPriceId: string;
+  productOfferingId?: string;
+  label: string;
+  unit: string;
+  unitPrice: number;
+};
 
 export type NormalizedQuoteItemStatus =
   | 'matched'
+  | 'matched_amount'
   | 'needs_confirmation'
   | 'unsupported_unit'
   | 'product_not_found'
@@ -19,10 +47,13 @@ export type NormalizedQuoteItem = {
     product?: string;
     quantity?: number;
     unit?: string;
+    amount?: number;
   };
   availableUnits: string[];
+  choices?: NormalizedQuoteChoice[];
   suggestedProducts?: string[];
   buyPriceId?: string;
+  productId?: string;
   unitPrice?: number;
   totalPrice?: number;
   message: string;
@@ -37,25 +68,6 @@ export type NormalizedOrderText = {
     matched: number;
     requiresAttention: number;
   };
-};
-
-const UNIT_ALIASES: Record<string, string[]> = {
-  kg: ['kg', 'kgs', 'kilogram', 'kilograms'],
-  bag: ['bag', 'bags'],
-  basket: ['basket', 'baskets'],
-  paint_bucket: [
-    'paint bucket',
-    'paint buckets',
-    'paint rubber',
-    'paint rubbers',
-  ],
-  crate: ['crate', 'crates'],
-  litre: ['litre', 'litres', 'liter', 'liters', 'l'],
-  bottle: ['bottle', 'bottles'],
-  bunch: ['bunch', 'bunches'],
-  piece: ['piece', 'pieces', 'pcs', 'pc'],
-  derica: ['derica', 'dericas'],
-  cup: ['cup', 'cups'],
 };
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -85,31 +97,49 @@ const NUMBER_WORDS: Record<string, number> = {
 
 @Injectable()
 export class OrderQuoteNormalizerService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly priceUnitsService: PriceUnitsService,
+  ) {}
 
   async normalize(orderText: string): Promise<NormalizedOrderText> {
-    const catalog = await this.getCatalog();
+    const [catalog, activeProducts, lookup] = await Promise.all([
+      this.getCatalog(),
+      this.getActiveProducts(),
+      this.priceUnitsService.getLookup(),
+    ]);
     const parts = orderText
       .split(/[,;\n]+/)
       .map((part) => part.trim())
       .filter(Boolean);
-    const items = parts.map((part) => this.normalizeItem(part, catalog));
+    const items = parts.map((part) =>
+      this.normalizeItem(part, catalog, activeProducts, lookup),
+    );
     const quoteItems = items
-      .filter(
-        (
-          item,
-        ): item is NormalizedQuoteItem & {
-          buyPriceId: string;
-          interpretation: { quantity: number };
-        } =>
+      .map((item): QuoteOrderItemDto | undefined => {
+        if (
           item.status === 'matched' &&
-          Boolean(item.buyPriceId) &&
-          typeof item.interpretation.quantity === 'number',
-      )
-      .map((item) => ({
-        buyPriceId: item.buyPriceId,
-        quantity: item.interpretation.quantity,
-      }));
+          item.buyPriceId &&
+          typeof item.interpretation.quantity === 'number'
+        ) {
+          return {
+            buyPriceId: item.buyPriceId,
+            quantity: item.interpretation.quantity,
+          };
+        }
+        if (
+          item.status === 'matched_amount' &&
+          item.productId &&
+          typeof item.interpretation.amount === 'number'
+        ) {
+          return {
+            productId: item.productId,
+            amount: item.interpretation.amount,
+          };
+        }
+        return undefined;
+      })
+      .filter((item): item is QuoteOrderItemDto => Boolean(item));
     const matched = quoteItems.length;
 
     return {
@@ -124,6 +154,65 @@ export class OrderQuoteNormalizerService {
     };
   }
 
+  /**
+   * Resolves a single needs_confirmation line once the customer has picked
+   * one of its `choices` - the frontend sends back just that one buyPriceId
+   * + quantity instead of resubmitting the whole orderText for
+   * re-normalization. Returns the same shape normalize() would have
+   * produced for that line had it matched outright.
+   */
+  async resolveChoice(
+    dto: ResolveQuoteChoiceDto,
+  ): Promise<NormalizedQuoteItem> {
+    const now = new Date();
+    const price = await this.prisma.buyPrice.findUnique({
+      where: { id: dto.buyPriceId },
+      include: {
+        product: true,
+        productOffering: {
+          include: { variant: true, brand: true, package: true },
+        },
+        priceUnit: true,
+      },
+    });
+
+    if (
+      !price ||
+      !price.isActive ||
+      price.validFrom > now ||
+      price.product.status !== ProductStatus.active
+    ) {
+      throw new BadRequestException(
+        `Buy price ${dto.buyPriceId} is not currently available`,
+      );
+    }
+
+    const unitPrice = this.toNumber(price.finalPrice);
+    const totalPrice = this.roundMoney(unitPrice * dto.quantity);
+
+    return {
+      original: dto.original ?? '',
+      status: 'matched',
+      interpretation: {
+        product: price.product.name,
+        quantity: dto.quantity,
+        unit: price.priceUnit.code,
+      },
+      availableUnits: [price.priceUnit.code],
+      buyPriceId: price.id,
+      unitPrice,
+      totalPrice,
+      message: `Matched ${this.formatQuantity(dto.quantity)} ${this.displayUnit(price.priceUnit.code)} of ${price.product.name}.`,
+    };
+  }
+
+  /**
+   * Market prices are only re-uploaded when they change, so an active
+   * BuyPrice with a validUntil in the past is still the correct price -
+   * it just hasn't been superseded because nothing changed. Only isActive
+   * (flipped false when a newer price supersedes it) and validFrom (don't
+   * use a price before its scheduled start) gate whether a price applies.
+   */
   private async getCatalog(): Promise<CatalogPrice[]> {
     const now = new Date();
 
@@ -131,18 +220,52 @@ export class OrderQuoteNormalizerService {
       where: {
         isActive: true,
         validFrom: { lte: now },
-        OR: [{ validUntil: null }, { validUntil: { gte: now } }],
         product: { status: ProductStatus.active },
       },
-      include: { product: true },
+      include: {
+        product: true,
+        productOffering: {
+          include: {
+            variant: true,
+            brand: true,
+            package: true,
+          },
+        },
+        priceUnit: true,
+      },
       orderBy: [{ finalPrice: 'asc' }, { updatedAt: 'desc' }],
+    });
+  }
+
+  /**
+   * Amount-based lines ("N2000 tomatoes") only need to identify the
+   * product, not a specific offering or price - so they must resolve
+   * against every active product, not just ones with a generated BuyPrice.
+   * A freshly catalogued product with no BuyPrice yet is still a valid
+   * target for an amount-based line.
+   */
+  private async getActiveProducts(): Promise<Product[]> {
+    return this.prisma.product.findMany({
+      where: { status: ProductStatus.active },
     });
   }
 
   private normalizeItem(
     original: string,
     catalog: CatalogPrice[],
+    activeProducts: Product[],
+    lookup: PriceUnitLookup,
   ): NormalizedQuoteItem {
+    const explicitAmount = this.parseAmount(original);
+    if (explicitAmount) {
+      return this.resolveAmountItem(
+        original,
+        explicitAmount.amount,
+        explicitAmount.productText,
+        activeProducts,
+      );
+    }
+
     const cleaned = this.clean(original);
     const quantityResult = this.parseQuantity(cleaned);
 
@@ -156,9 +279,42 @@ export class OrderQuoteNormalizerService {
       };
     }
 
-    const unitResult = this.parseUnit(quantityResult.remainder);
+    const unitResult = this.parseUnit(quantityResult.remainder, lookup);
+
+    if (!unitResult.unit) {
+      const unitAttempt = this.detectUnrecognizedUnit(
+        quantityResult.remainder,
+        activeProducts,
+      );
+
+      if (unitAttempt) {
+        return this.unsupportedUnitItem(
+          original,
+          unitAttempt.product,
+          quantityResult.quantity,
+          unitAttempt.attemptedUnit,
+          catalog,
+        );
+      }
+
+      // No recognizable unit at all: read the leading number as a Naira
+      // amount instead of a quantity, e.g. "400 onions" -> N400 of onions.
+      const productText = this.clean(
+        quantityResult.remainder.replace(/^of\s+/, ''),
+      );
+      return this.resolveAmountItem(
+        original,
+        quantityResult.quantity,
+        productText,
+        activeProducts,
+      );
+    }
+
     const productText = this.clean(unitResult.remainder.replace(/^of\s+/, ''));
-    const productMatch = this.matchProduct(productText, catalog);
+    const productMatch = this.matchProduct(
+      productText,
+      catalog.map((price) => price.product),
+    );
 
     if (!productMatch.product) {
       return {
@@ -183,40 +339,45 @@ export class OrderQuoteNormalizerService {
       (price) => price.productId === productMatch.product?.id,
     );
     const availableUnits = [
-      ...new Set(productPrices.map((price) => price.unit)),
+      ...new Set(productPrices.map((price) => price.priceUnit.code)),
     ];
+    const matchingUnitPrices = productPrices.filter(
+      (candidate) => candidate.priceUnit.code === unitResult.unit,
+    );
 
-    if (!unitResult.unit) {
+    if (matchingUnitPrices.length === 0) {
+      return this.unsupportedUnitItem(
+        original,
+        productMatch.product,
+        quantityResult.quantity,
+        unitResult.unit,
+        catalog,
+      );
+    }
+
+    const resolved = this.resolvePriceCandidate(
+      this.clean(
+        [unitResult.packageHint, productText].filter(Boolean).join(' '),
+      ),
+      matchingUnitPrices,
+    );
+
+    if (!resolved.price) {
       return {
         original,
         status: 'needs_confirmation',
         interpretation: {
           product: productMatch.product.name,
           quantity: quantityResult.quantity,
-        },
-        availableUnits,
-        message: `${productMatch.product.name} was found, but no unit was recognized. Available units are ${this.joinWords(availableUnits)}.`,
-      };
-    }
-
-    const price = productPrices.find(
-      (candidate) => candidate.unit === unitResult.unit,
-    );
-
-    if (!price) {
-      return {
-        original,
-        status: 'unsupported_unit',
-        interpretation: {
-          product: productMatch.product.name,
-          quantity: quantityResult.quantity,
           unit: unitResult.unit,
         },
         availableUnits,
-        message: `${productMatch.product.name} is not currently available in ${this.displayUnit(unitResult.unit)}. Available units are ${this.joinWords(availableUnits)}.`,
+        choices: resolved.choices,
+        message: `${productMatch.product.name} has multiple ${this.displayUnit(unitResult.unit)} offerings. Please choose one.`,
       };
     }
 
+    const price = resolved.price;
     const unitPrice = this.toNumber(price.finalPrice);
     const totalPrice = this.roundMoney(unitPrice * quantityResult.quantity);
 
@@ -226,13 +387,155 @@ export class OrderQuoteNormalizerService {
       interpretation: {
         product: productMatch.product.name,
         quantity: quantityResult.quantity,
-        unit: price.unit,
+        unit: price.priceUnit.code,
       },
       availableUnits,
       buyPriceId: price.id,
       unitPrice,
       totalPrice,
-      message: `Matched ${this.formatQuantity(quantityResult.quantity)} ${this.displayUnit(price.unit)} of ${productMatch.product.name}.`,
+      message: `Matched ${this.formatQuantity(quantityResult.quantity)} ${this.displayUnit(price.priceUnit.code)} of ${productMatch.product.name}.`,
+    };
+  }
+
+  /**
+   * Amount-based line: the customer stated a Naira budget instead of a
+   * quantity+unit (e.g. "N2000 tomatoes", or "400 onions" with no unit at
+   * all). No price is calculated - the stated amount becomes the line's
+   * total directly. Only the product needs to be identified.
+   */
+  private resolveAmountItem(
+    original: string,
+    amount: number,
+    productText: string,
+    activeProducts: Product[],
+  ): NormalizedQuoteItem {
+    const productMatch = this.matchProduct(productText, activeProducts);
+
+    if (!productMatch.product) {
+      return {
+        original,
+        status: productMatch.suggestions.length
+          ? 'needs_confirmation'
+          : 'product_not_found',
+        interpretation: {
+          product: productText || undefined,
+          amount,
+        },
+        availableUnits: [],
+        suggestedProducts: productMatch.suggestions,
+        message: productMatch.suggestions.length
+          ? `We could not confidently identify "${productText}". Did you mean ${this.joinWords(productMatch.suggestions)}?`
+          : `We could not find "${productText}" in the active product catalog.`,
+      };
+    }
+
+    return {
+      original,
+      status: 'matched_amount',
+      interpretation: {
+        product: productMatch.product.name,
+        amount,
+      },
+      availableUnits: [],
+      productId: productMatch.product.id,
+      totalPrice: this.roundMoney(amount),
+      message: `Matched ${this.formatMoney(amount)} worth of ${productMatch.product.name}. The exact quantity will be decided at fulfillment.`,
+    };
+  }
+
+  private resolvePriceCandidate(
+    productText: string,
+    prices: CatalogPrice[],
+  ): { price?: CatalogPrice; choices?: NormalizedQuoteChoice[] } {
+    if (prices.length === 1) {
+      return { price: prices[0] };
+    }
+
+    const detailed = prices.filter((price) => price.productOffering);
+    const legacy = prices.filter((price) => !price.productOffering);
+
+    if (detailed.length === 0) {
+      return { price: legacy[0] };
+    }
+
+    const ranked = detailed
+      .map((price) => ({
+        price,
+        score: this.offeringMatchScore(productText, price),
+      }))
+      .sort((first, second) => second.score - first.score);
+    const best = ranked[0];
+    const second = ranked[1];
+
+    if (best && best.score > 0 && (!second || best.score - second.score >= 1)) {
+      return { price: best.price };
+    }
+
+    return {
+      choices: prices.map((price) => this.toChoice(price)),
+    };
+  }
+
+  private offeringMatchScore(productText: string, price: CatalogPrice): number {
+    const offering = price.productOffering;
+    if (!offering) return 0;
+
+    return [
+      offering.variant?.name,
+      offering.brand?.name,
+      offering.package.name,
+      offering.sku,
+    ].reduce((score, value) => {
+      if (!value) return score;
+      const normalized = this.clean(value);
+      return productText.includes(normalized) ? score + 1 : score;
+    }, 0);
+  }
+
+  private toChoice(price: CatalogPrice): NormalizedQuoteChoice {
+    return {
+      buyPriceId: price.id,
+      productOfferingId: price.productOfferingId ?? undefined,
+      label: this.offeringLabel(price),
+      unit: price.priceUnit.code,
+      unitPrice: this.toNumber(price.finalPrice),
+    };
+  }
+
+  private offeringLabel(price: CatalogPrice): string {
+    const offering = price.productOffering;
+    if (!offering) {
+      return `${price.product.name} — ${this.displayUnit(price.priceUnit.code)}`;
+    }
+
+    return [
+      offering.brand?.name,
+      offering.variant?.name,
+      price.product.name,
+      offering.package.name,
+    ]
+      .filter(Boolean)
+      .join(' — ');
+  }
+
+  /**
+   * Detects an explicit Naira amount marker ("N2000", "₦2,000", "NGN 2000")
+   * at the start of a line. This is the unambiguous signal for an
+   * amount-based line; the other signal (a bare number with no recognized
+   * unit) is handled separately in normalizeItem once unit-parsing fails.
+   */
+  private parseAmount(
+    value: string,
+  ): { amount: number; productText: string } | undefined {
+    const match = value.trim().match(/^(?:₦|N|NGN)\s*([\d,]+(?:\.\d+)?)\s*(.*)$/i);
+    if (!match) return undefined;
+
+    const amount = Number(match[1].replace(/,/g, ''));
+    if (!Number.isFinite(amount) || amount <= 0) return undefined;
+
+    return {
+      amount,
+      productText: this.clean(match[2].replace(/^of\s+/i, '')),
     };
   }
 
@@ -309,22 +612,49 @@ export class OrderQuoteNormalizerService {
     };
   }
 
-  private parseUnit(value: string): { unit?: string; remainder: string } {
+  private parseUnit(
+    value: string,
+    lookup: PriceUnitLookup,
+  ): {
+    unit?: string;
+    packageHint?: string;
+    remainder: string;
+  } {
+    const sizedPackage = value.match(
+      /^(\d+(?:\.\d+)?)\s*(kg|g|litres?|liters?|l|ml)\s+(bags?|baskets?|buckets?|crates?|bottles?)\b/,
+    );
+    if (sizedPackage) {
+      const unit = lookup.resolveByName(sizedPackage[3])?.code;
+      if (unit) {
+        return {
+          unit,
+          packageHint: sizedPackage[0],
+          remainder: value.slice(sizedPackage[0].length).trim(),
+        };
+      }
+    }
+
     const words = value.split(/\s+/);
     const candidates = [words.slice(0, 2).join(' '), words[0]].filter(Boolean);
+    const activeUnits = lookup.all().filter((unit) => unit.isActive);
     let best:
       | { unit: string; consumedWords: number; score: number }
       | undefined;
 
     for (const candidate of candidates) {
-      for (const [unit, aliases] of Object.entries(UNIT_ALIASES)) {
-        for (const alias of aliases) {
+      for (const unit of activeUnits) {
+        const aliasCandidates = [
+          unit.code.replace(/_/g, ' '),
+          ...unit.aliases.map((alias) => alias.replace(/_/g, ' ')),
+        ];
+
+        for (const alias of aliasCandidates) {
           const score = this.similarity(candidate, alias);
           const exact = candidate === alias;
 
           if ((exact || score >= 0.72) && (!best || score > best.score)) {
             best = {
-              unit,
+              unit: unit.code,
               consumedWords: candidate.split(' ').length,
               score,
             };
@@ -345,12 +675,10 @@ export class OrderQuoteNormalizerService {
 
   private matchProduct(
     value: string,
-    catalog: CatalogPrice[],
+    candidates: Product[],
   ): { product?: Product; suggestions: string[] } {
     const products = [
-      ...new Map(
-        catalog.map((price) => [price.product.id, price.product]),
-      ).values(),
+      ...new Map(candidates.map((product) => [product.id, product])).values(),
     ];
     const ranked = products
       .map((product) => {
@@ -385,11 +713,151 @@ export class OrderQuoteNormalizerService {
     return { product: best.product, suggestions: [] };
   }
 
+  /**
+   * When parseUnit finds no recognized leading unit word, the remainder
+   * might still be "<unrecognized unit> <product>" (e.g. "kobiowu of rice")
+   * rather than a bare product name (e.g. "onions"). Detect that shape by
+   * checking whether dropping 1-2 leading words turns a non-match into a
+   * confident product match - if so, the dropped words are what the
+   * customer meant as a unit, and this should surface as unsupported_unit
+   * (with the product's real available units) instead of silently falling
+   * through to amount-mode and pricing the leading number as a Naira value.
+   */
+  private detectUnrecognizedUnit(
+    remainder: string,
+    activeProducts: Product[],
+  ): { product: Product; attemptedUnit: string } | undefined {
+    const words = this.clean(remainder)
+      .split(/\s+/)
+      .filter((word) => word && word !== 'of');
+
+    if (words.length < 2) {
+      return undefined;
+    }
+
+    if (this.matchProductStrict(words.join(' '), activeProducts)) {
+      return undefined;
+    }
+
+    for (const dropCount of [1, 2]) {
+      if (dropCount >= words.length) break;
+
+      const product = this.matchProductStrict(
+        words.slice(dropCount).join(' '),
+        activeProducts,
+      );
+
+      if (product) {
+        return {
+          product,
+          attemptedUnit: words.slice(0, dropCount).join(' '),
+        };
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Stricter than matchProduct(): only an exact clean match, a confident
+   * typo-tolerant match, or the product's real name containing a shorter
+   * typed value (prefix typing) count. Deliberately excludes matchProduct's
+   * "value.includes(name)" shortcut - that lets any noisy multi-word string
+   * that merely contains a product name as a substring match with high
+   * confidence, which is what let "kobiowu of rice" match Rice outright.
+   */
+  private matchProductStrict(
+    value: string,
+    products: Product[],
+  ): Product | undefined {
+    const unique = [
+      ...new Map(products.map((product) => [product.id, product])).values(),
+    ];
+    const ranked = unique
+      .map((product) => {
+        const name = this.clean(product.name);
+        const exact = name === value;
+        const prefixContained =
+          !exact && name.length > value.length && name.includes(value);
+        return {
+          product,
+          score: exact ? 1 : prefixContained ? 0.85 : this.similarity(value, name),
+        };
+      })
+      .sort((first, second) => second.score - first.score);
+    const best = ranked[0];
+
+    if (!best || best.score < 0.72) {
+      return undefined;
+    }
+
+    const runnerUp = ranked[1];
+    if (runnerUp && best.score - runnerUp.score < 0.08) {
+      return undefined;
+    }
+
+    return best.product;
+  }
+
+  private unsupportedUnitItem(
+    original: string,
+    product: Product,
+    quantity: number,
+    attemptedUnit: string,
+    catalog: CatalogPrice[],
+  ): NormalizedQuoteItem {
+    const productPrices = catalog.filter(
+      (price) => price.productId === product.id,
+    );
+    const availableUnits = [
+      ...new Set(productPrices.map((price) => price.priceUnit.code)),
+    ];
+
+    if (availableUnits.length === 0) {
+      return {
+        original,
+        status: 'product_not_found',
+        interpretation: { product: product.name, quantity, unit: attemptedUnit },
+        availableUnits: [],
+        message: `${product.name} does not have any prices available yet.`,
+      };
+    }
+
+    return {
+      original,
+      status: 'unsupported_unit',
+      interpretation: { product: product.name, quantity, unit: attemptedUnit },
+      availableUnits,
+      // Every real offering across all of this product's units, so the
+      // frontend can let the customer pick one directly and send its
+      // buyPriceId straight to POST /orders/quote/resolve-item - no
+      // separate "pick a unit, then pick an offering" round trip needed.
+      choices: productPrices.map((price) => this.toChoice(price)),
+      message: `${product.name} is not currently available in ${this.displayUnit(attemptedUnit)}. Available units are ${this.joinWords(availableUnits)}.`,
+    };
+  }
+
   private clean(value: string): string {
     return value
       .toLowerCase()
       .replace(/[^a-z0-9/\s-]/g, ' ')
       .replace(/-/g, ' ')
+      .replace(
+        /\b(bags|baskets|buckets|crates|bottles|bunches|pieces|litres|liters|kilograms)\b/g,
+        (word) =>
+          ({
+            bags: 'bag',
+            baskets: 'basket',
+            buckets: 'bucket',
+            crates: 'crate',
+            bottles: 'bottle',
+            bunches: 'bunch',
+            pieces: 'piece',
+            litres: 'litre',
+            liters: 'liter',
+            kilograms: 'kilogram',
+          })[word] ?? word,
+      )
       .replace(/\s+/g, ' ')
       .trim();
   }
@@ -447,5 +915,12 @@ export class OrderQuoteNormalizerService {
 
   private roundMoney(value: number): number {
     return Math.round(value * 100) / 100;
+  }
+
+  private formatMoney(value: number, currency = 'NGN'): string {
+    return new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency,
+    }).format(value);
   }
 }

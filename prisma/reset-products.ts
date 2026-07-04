@@ -1,30 +1,24 @@
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
-import {
-  PriceQualityGrade,
-  PriceSource,
-  PriceUnit,
-  PrismaClient,
-  ProductCategory,
-} from '@prisma/client';
+import { PriceQualityGrade, PriceSource, PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 
 type ProductSeed = {
   name: string;
-  category: ProductCategory;
+  category: string;
 };
 
 type ProductPricing = {
-  unit: PriceUnit;
+  unit: string;
   baseAmount: number;
 };
 
 const catalog: Array<{
-  category: ProductCategory;
+  category: string;
   products: string[];
 }> = [
   {
-    category: ProductCategory.Grains,
+    category: 'Grains',
     products: [
       'Rice',
       'Ofada Rice',
@@ -39,7 +33,7 @@ const catalog: Array<{
     ],
   },
   {
-    category: ProductCategory.Tubers,
+    category: 'Tubers',
     products: [
       'Yam',
       'Cassava',
@@ -51,7 +45,7 @@ const catalog: Array<{
     ],
   },
   {
-    category: ProductCategory.Grains,
+    category: 'Grains',
     products: [
       'Garri',
       'Fufu',
@@ -65,7 +59,7 @@ const catalog: Array<{
     ],
   },
   {
-    category: ProductCategory.Legumes,
+    category: 'Legumes',
     products: [
       'Brown Beans',
       'White Beans',
@@ -77,7 +71,7 @@ const catalog: Array<{
     ],
   },
   {
-    category: ProductCategory.Vegetables,
+    category: 'Vegetables',
     products: [
       'Tomatoes',
       'Pepper',
@@ -98,7 +92,7 @@ const catalog: Array<{
     ],
   },
   {
-    category: ProductCategory.Fruits,
+    category: 'Fruits',
     products: [
       'Mango',
       'Pineapple',
@@ -115,7 +109,7 @@ const catalog: Array<{
     ],
   },
   {
-    category: ProductCategory.Oils,
+    category: 'Oils',
     products: [
       'Palm Oil',
       'Groundnut Oil',
@@ -125,19 +119,19 @@ const catalog: Array<{
     ],
   },
   {
-    category: ProductCategory.Meat,
+    category: 'Meat',
     products: ['Beef', 'Goat Meat', 'Chicken', 'Turkey'],
   },
   {
-    category: ProductCategory.Seafood,
+    category: 'Seafood',
     products: ['Fish', 'Catfish', 'Tilapia', 'Stockfish', 'Crayfish', 'Snail'],
   },
   {
-    category: ProductCategory.Dairy,
+    category: 'Dairy',
     products: ['Eggs'],
   },
   {
-    category: ProductCategory.Spices,
+    category: 'Spices',
     products: [
       'Egusi',
       'Ogbono',
@@ -160,7 +154,7 @@ const catalog: Array<{
     ],
   },
   {
-    category: ProductCategory.Snacks,
+    category: 'Snacks',
     products: [
       'Chin Chin',
       'Kilishi',
@@ -173,7 +167,7 @@ const catalog: Array<{
     ],
   },
   {
-    category: ProductCategory.Seafood,
+    category: 'Seafood',
     products: [
       'Dry Fish',
       'Fresh Fish',
@@ -184,43 +178,43 @@ const catalog: Array<{
     ],
   },
   {
-    category: ProductCategory.Dairy,
+    category: 'Dairy',
     products: ['Milk', 'Yogurt', 'Butter', 'Cheese'],
   },
   {
-    category: ProductCategory.Beverages,
+    category: 'Beverages',
     products: ['Cocoa Powder', 'Tea', 'Coffee'],
   },
   {
-    category: ProductCategory.Legumes,
+    category: 'Legumes',
     products: ['Beans', 'Groundnut'],
   },
   {
-    category: ProductCategory.Meat,
+    category: 'Meat',
     products: ['Meat'],
   },
   {
-    category: ProductCategory.Dairy,
+    category: 'Dairy',
     products: ['Egg'],
   },
   {
-    category: ProductCategory.Spices,
+    category: 'Spices',
     products: ['Spices'],
   },
   {
-    category: ProductCategory.Fruits,
+    category: 'Fruits',
     products: ['Fruits'],
   },
   {
-    category: ProductCategory.Vegetables,
+    category: 'Vegetables',
     products: ['Vegetables'],
   },
   {
-    category: ProductCategory.Grains,
+    category: 'Grains',
     products: ['Flour'],
   },
   {
-    category: ProductCategory.Other,
+    category: 'Other',
     products: ['Noodles', 'Sugar'],
   },
 ];
@@ -255,11 +249,11 @@ function getProductPricing(product: ProductSeed): ProductPricing {
   const name = product.name.toLowerCase();
 
   if (name.includes('oil') || ['milk', 'yogurt'].includes(name)) {
-    return { unit: PriceUnit.litre, baseAmount: 2500 };
+    return { unit: 'litre', baseAmount: 2500 };
   }
 
   if (['eggs', 'egg'].includes(name)) {
-    return { unit: PriceUnit.crate, baseAmount: 6500 };
+    return { unit: 'crate', baseAmount: 6500 };
   }
 
   if (
@@ -272,44 +266,38 @@ function getProductPricing(product: ProductSeed): ProductPricing {
       'scent leaf',
     ].includes(name)
   ) {
-    return { unit: PriceUnit.bunch, baseAmount: 4000 };
+    return { unit: 'bunch', baseAmount: 4000 };
   }
 
   if (
-    product.category === ProductCategory.Grains ||
-    product.category === ProductCategory.Legumes ||
-    product.category === ProductCategory.Tubers
+    product.category === 'Grains' ||
+    product.category === 'Legumes' ||
+    product.category === 'Tubers'
   ) {
-    return { unit: PriceUnit.bag, baseAmount: 55000 };
+    return { unit: 'bag', baseAmount: 55000 };
+  }
+
+  if (product.category === 'Vegetables' || product.category === 'Fruits') {
+    return { unit: 'big_basket', baseAmount: 22000 };
+  }
+
+  if (product.category === 'Meat' || product.category === 'Seafood') {
+    return { unit: 'kg', baseAmount: 7500 };
+  }
+
+  if (product.category === 'Spices') {
+    return { unit: 'kg', baseAmount: 5000 };
   }
 
   if (
-    product.category === ProductCategory.Vegetables ||
-    product.category === ProductCategory.Fruits
+    product.category === 'Dairy' ||
+    product.category === 'Beverages' ||
+    product.category === 'Snacks'
   ) {
-    return { unit: PriceUnit.basket, baseAmount: 22000 };
+    return { unit: 'piece', baseAmount: 3000 };
   }
 
-  if (
-    product.category === ProductCategory.Meat ||
-    product.category === ProductCategory.Seafood
-  ) {
-    return { unit: PriceUnit.kg, baseAmount: 7500 };
-  }
-
-  if (product.category === ProductCategory.Spices) {
-    return { unit: PriceUnit.kg, baseAmount: 5000 };
-  }
-
-  if (
-    product.category === ProductCategory.Dairy ||
-    product.category === ProductCategory.Beverages ||
-    product.category === ProductCategory.Snacks
-  ) {
-    return { unit: PriceUnit.piece, baseAmount: 3000 };
-  }
-
-  return { unit: PriceUnit.piece, baseAmount: 4500 };
+  return { unit: 'piece', baseAmount: 4500 };
 }
 
 function stringScore(value: string): number {
@@ -363,11 +351,37 @@ async function main() {
         );
       }
 
+      const priceUnits = await tx.priceUnit.findMany();
+      const priceUnitIdByCode = new Map(
+        priceUnits.map((priceUnit) => [priceUnit.code, priceUnit.id]),
+      );
+
       const deleted = await tx.product.deleteMany();
+      const categoryNames = [
+        ...new Set(products.map((product) => product.category)),
+      ];
+      for (const [index, name] of categoryNames.entries()) {
+        const slug = name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '');
+        await tx.productCategory.upsert({
+          where: { slug },
+          update: { name, isActive: true, sortOrder: (index + 1) * 10 },
+          create: { name, slug, sortOrder: (index + 1) * 10 },
+        });
+      }
+      const categories = await tx.productCategory.findMany({
+        where: { name: { in: categoryNames } },
+      });
+      const categoryIdByName = new Map(
+        categories.map((category) => [category.name, category.id]),
+      );
       const inserted = await tx.product.createMany({
         data: products.map((product) => ({
-          ...product,
+          name: product.name,
           sku: createSku(product),
+          categoryId: categoryIdByName.get(product.category) as string,
         })),
       });
 
@@ -387,13 +401,18 @@ async function main() {
         }
 
         const { unit } = getProductPricing(product);
+        const priceUnitId = priceUnitIdByCode.get(unit);
+
+        if (!priceUnitId) {
+          throw new Error(`Missing price unit seed data for code "${unit}".`);
+        }
 
         return markets.map((market, marketIndex) => ({
           productId: createdProduct.id,
           marketId: market.id,
           amount: calculateMarketAmount(product, marketIndex),
           currency: 'NGN',
-          unit,
+          priceUnitId,
           quantity: 1,
           qualityGrade:
             marketIndex % 3 === 0

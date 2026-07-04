@@ -1,9 +1,8 @@
-import { ProductCategory, ProductStatus } from '@prisma/client';
 import {
-  IsEnum,
   IsOptional,
   IsString,
   IsUrl,
+  IsUUID,
   MinLength,
 } from 'class-validator';
 
@@ -20,15 +19,10 @@ export class CreateProductDto {
   @MinLength(1)
   sku: string;
 
-  @IsOptional()
-  @IsEnum(ProductCategory)
-  category?: ProductCategory;
+  @IsUUID()
+  categoryId: string;
 
   @IsOptional()
   @IsUrl()
   imageUrl?: string;
-
-  @IsOptional()
-  @IsEnum(ProductStatus)
-  status?: ProductStatus;
 }

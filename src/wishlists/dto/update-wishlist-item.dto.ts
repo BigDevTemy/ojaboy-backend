@@ -1,8 +1,12 @@
-import { PriceUnit } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { IsEnum, IsNumber, IsOptional, Min } from 'class-validator';
+import { IsNumber, IsOptional, IsUUID, Min } from 'class-validator';
+import { IsPriceUnit } from '../../price-units/validators/is-price-unit.validator';
 
 export class UpdateWishlistItemDto {
+  @IsOptional()
+  @IsUUID()
+  productOfferingId?: string | null;
+
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
@@ -10,6 +14,6 @@ export class UpdateWishlistItemDto {
   quantity?: number;
 
   @IsOptional()
-  @IsEnum(PriceUnit)
-  unit?: PriceUnit;
+  @IsPriceUnit()
+  unit?: string;
 }

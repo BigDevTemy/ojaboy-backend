@@ -187,7 +187,7 @@ export class NotificationsService {
           id: true,
           productId: true,
           targetPrice: true,
-          unit: true,
+          priceUnit: true,
           condition: true,
           frequency: true,
           status: true,

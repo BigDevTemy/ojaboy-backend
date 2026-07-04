@@ -2,7 +2,6 @@ import {
   PriceAlertCondition,
   PriceAlertFrequency,
   PriceAlertStatus,
-  PriceUnit,
 } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
@@ -11,9 +10,11 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   Min,
   MinLength,
 } from 'class-validator';
+import { IsPriceUnit } from '../../price-units/validators/is-price-unit.validator';
 
 export class UpdatePriceAlertDto {
   @IsOptional()
@@ -22,14 +23,18 @@ export class UpdatePriceAlertDto {
   productId?: string;
 
   @IsOptional()
+  @IsUUID()
+  productOfferingId?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0.01)
   targetPrice?: number;
 
   @IsOptional()
-  @IsEnum(PriceUnit)
-  unit?: PriceUnit;
+  @IsPriceUnit()
+  unit?: string;
 
   @IsOptional()
   @IsEnum(PriceAlertCondition)

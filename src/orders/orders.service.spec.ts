@@ -1,11 +1,13 @@
 import { ConfigService } from '@nestjs/config';
 import {
   NotificationSource,
+  OrderItemPricingMode,
   OrderPaymentStatus,
   OrderStatus,
   PaymentStatus,
 } from '@prisma/client';
 import * as XLSX from 'xlsx';
+import type { OrderPaginationQueryDto } from './dto/order-pagination-query.dto';
 import { OrdersService } from './orders.service';
 
 describe('OrdersService order authentication', () => {
@@ -211,7 +213,7 @@ describe('OrdersService order authentication', () => {
           productId: 'product-id',
           product: { name: 'Local Rice' },
           quantity: 1,
-          unit: 'bag',
+          priceUnit: { code: 'bag' },
           unitPrice: 72000,
           totalPrice: 72000,
           buyPriceId: 'buy-price-id',
@@ -289,7 +291,7 @@ describe('OrdersService order authentication', () => {
             productId: 'product-id',
             product: { name: 'Beans' },
             quantity: 1,
-            unit: 'bag',
+            priceUnit: { code: 'bag' },
             unitPrice: 100,
             totalPrice: 100,
             buyPriceId: null,
@@ -326,7 +328,12 @@ describe('OrdersService order authentication', () => {
     };
     const service = createService(prisma);
 
-    await expect(service.getUserOrders('user-id', {})).resolves.toEqual({
+    await expect(
+      service.getUserOrders(
+        'user-id',
+        { page: 1, limit: 50 } as OrderPaginationQueryDto,
+      ),
+    ).resolves.toEqual({
       orders: [],
       pagination: {
         page: 1,
@@ -514,7 +521,7 @@ describe('OrdersService order authentication', () => {
           product: { name: 'Tomatoes' },
           buyPrice: { currency: 'NGN' },
           quantity: 2,
-          unit: 'kg',
+          priceUnit: { code: 'kg' },
           unitPrice: 1000,
           totalPrice: 2000,
         },
@@ -622,7 +629,7 @@ describe('OrdersService order authentication', () => {
           product: { name: 'Tomatoes' },
           buyPrice: { currency: 'NGN' },
           quantity: 2,
-          unit: 'kg',
+          priceUnit: { code: 'kg' },
           unitPrice: 1000,
           totalPrice: 2000,
         },
@@ -723,5 +730,115 @@ describe('OrdersService order authentication', () => {
       unchangedOrderIds: ['order-two'],
       notFoundOrderIds: ['missing-order'],
     });
+  });
+});
+
+describe('OrdersService calculateQuote buy price validity', () => {
+  const customer = { id: 'user-id', email: 'customer@example.com' };
+  const deliveryAddress = {
+    id: 'address-id',
+    label: 'Home',
+    recipientName: 'Customer',
+    phoneNumber: '+2348000000000',
+    formattedAddress: '12 Herbert Macaulay Way',
+    googlePlaceId: null,
+    latitude: 6.5,
+    longitude: 3.3,
+    deliveryZoneId: 'zone-id',
+    deliveryZone: { id: 'zone-id', name: 'Yaba' },
+  };
+
+  const createService = (buyPrice: Record<string, unknown>) => {
+    const prisma = {
+      buyPrice: { findMany: jest.fn().mockResolvedValue([buyPrice]) },
+      product: { findMany: jest.fn().mockResolvedValue([]) },
+      promotion: { findMany: jest.fn().mockResolvedValue([]) },
+      serviceFeeRule: { findFirst: jest.fn().mockResolvedValue(null) },
+      deliveryZone: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'zone-id',
+          isActive: true,
+          deliveryCost: 500,
+        }),
+      },
+    };
+    const addressesService = {
+      getValidatedDefaultAddress: jest.fn().mockResolvedValue(deliveryAddress),
+    };
+    const service = new OrdersService(
+      { get: jest.fn() } as never,
+      {} as never,
+      prisma as never,
+      addressesService as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    return service;
+  };
+
+  const baseBuyPrice = {
+    id: 'buy-price-id',
+    productId: 'product-id',
+    productOfferingId: null,
+    marketId: null,
+    finalPrice: 1300,
+    currency: 'NGN',
+    priceUnitId: 'unit-id',
+    product: { name: 'Tomatoes' },
+    productOffering: null,
+  };
+
+  it('uses a still-active buy price even though validUntil has elapsed', async () => {
+    const service = createService({
+      ...baseBuyPrice,
+      isActive: true,
+      validFrom: new Date('2026-06-01T00:00:00.000Z'),
+      validUntil: new Date('2026-07-02T00:00:00.000Z'), // yesterday relative to "today"
+    });
+
+    const quote = await (service as any).calculateQuote(
+      { items: [{ buyPriceId: 'buy-price-id', quantity: 2 }] },
+      customer,
+    );
+
+    expect(quote.items[0]).toMatchObject({
+      buyPriceId: 'buy-price-id',
+      pricingMode: OrderItemPricingMode.unit,
+      totalPrice: 2600,
+    });
+  });
+
+  it('rejects a buy price that has been deactivated by a newer price', async () => {
+    const service = createService({
+      ...baseBuyPrice,
+      isActive: false,
+      validFrom: new Date('2026-06-01T00:00:00.000Z'),
+      validUntil: null,
+    });
+
+    await expect(
+      (service as any).calculateQuote(
+        { items: [{ buyPriceId: 'buy-price-id', quantity: 2 }] },
+        customer,
+      ),
+    ).rejects.toThrow('Buy price buy-price-id is not currently available');
+  });
+
+  it('rejects a buy price scheduled to start in the future', async () => {
+    const service = createService({
+      ...baseBuyPrice,
+      isActive: true,
+      validFrom: new Date('2026-12-01T00:00:00.000Z'),
+      validUntil: null,
+    });
+
+    await expect(
+      (service as any).calculateQuote(
+        { items: [{ buyPriceId: 'buy-price-id', quantity: 2 }] },
+        customer,
+      ),
+    ).rejects.toThrow('Buy price buy-price-id is not currently available');
   });
 });

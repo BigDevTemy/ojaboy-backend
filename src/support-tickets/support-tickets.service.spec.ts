@@ -157,6 +157,7 @@ describe('SupportTicketsService', () => {
         where: {
           assignedToId?: string;
           status?: SupportTicketStatus;
+          priority?: SupportTicketPriority;
         };
         skip: number;
         take: number;

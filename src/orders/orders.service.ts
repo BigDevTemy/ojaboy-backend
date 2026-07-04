@@ -15,10 +15,10 @@ import {
   NotificationPriority,
   NotificationSource,
   OrderFeedback,
+  OrderItemPricingMode,
   OrderStatus,
   PaymentProvider,
   PaymentStatus,
-  PriceUnit,
   Prisma,
   User,
 } from '@prisma/client';
@@ -43,17 +43,24 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderListQueryDto } from './dto/order-list-query.dto';
 import { OrderPaginationQueryDto } from './dto/order-pagination-query.dto';
 import { QuoteOrderDto } from './dto/quote-order.dto';
+import { ResolveQuoteChoiceDto } from './dto/resolve-quote-choice.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrderQuoteNormalizerService } from './order-quote-normalizer.service';
 
 type PreparedOrderItem = {
   productId: string;
-  buyPriceId: string;
-  marketId: string | null;
+  productOfferingId?: string;
+  buyPriceId?: string;
+  marketId?: string | null;
   productName: string;
-  quantity: number;
-  unit: PriceUnit;
-  unitPrice: number;
+  variantName?: string;
+  brandName?: string;
+  packageName?: string;
+  offeringSku?: string;
+  pricingMode: OrderItemPricingMode;
+  quantity?: number;
+  priceUnitId?: string;
+  unitPrice?: number;
   totalPrice: number;
   currency: string;
 };
@@ -127,6 +134,7 @@ const ORDER_ITEM_EXPORT_HEADERS = [
   'itemId',
   'productId',
   'productName',
+  'pricingMode',
   'quantity',
   'unit',
   'unitPrice',
@@ -274,7 +282,7 @@ export class OrdersService {
 
   async getUserOrderStats(userId: string) {
     const [totalOrders, completedOrders, pendingOrders, moneySpent, rating] =
-      await this.prisma.$transaction([
+      await Promise.all([
         this.prisma.order.count({ where: { userId } }),
         this.prisma.order.count({
           where: { userId, status: OrderStatus.delivered },
@@ -333,12 +341,22 @@ export class OrdersService {
     return { orders };
   }
 
+  async getUserOrdersAsAdmin(
+    actor: AuthUser,
+    userId: string,
+    pagination: OrderPaginationQueryDto,
+  ) {
+    this.assertAdmin(actor);
+
+    return this.getUserOrders(userId, pagination);
+  }
+
   async getUserOrders(
     userId: string,
     { page = 1, limit = 50 }: OrderPaginationQueryDto,
   ) {
     const where = { userId };
-    const [orders, total] = await this.prisma.$transaction([
+    const [orders, total] = await Promise.all([
       this.prisma.order.findMany({
         where,
         include: this.orderInclude(),
@@ -552,6 +570,10 @@ export class OrdersService {
     }
 
     return { order };
+  }
+
+  async resolveQuoteItem(dto: ResolveQuoteChoiceDto) {
+    return this.orderQuoteNormalizer.resolveChoice(dto);
   }
 
   async quote(dto: QuoteOrderDto, authenticatedUser?: AuthUser) {
@@ -772,9 +794,16 @@ export class OrdersService {
               items: {
                 create: quote.items.map((item) => ({
                   productId: item.productId,
+                  productOfferingId: item.productOfferingId,
                   buyPriceId: item.buyPriceId,
+                  productName: item.productName,
+                  variantName: item.variantName,
+                  brandName: item.brandName,
+                  packageName: item.packageName,
+                  offeringSku: item.offeringSku,
+                  pricingMode: item.pricingMode,
                   quantity: item.quantity,
-                  unit: item.unit,
+                  priceUnitId: item.priceUnitId,
                   unitPrice: item.unitPrice,
                   totalPrice: item.totalPrice,
                 })),
@@ -897,19 +926,22 @@ export class OrdersService {
           orderStatus: order.status,
           orderMessage:
             'Your order has been received successfully and is awaiting processing.',
-          orderItems: order.items.map((item) => ({
-            productName: item.product.name,
-            quantity: this.toNumber(item.quantity).toString(),
-            unit: item.unit.replace(/_/g, ' '),
-            unitPrice: this.formatMoney(
-              this.toNumber(item.unitPrice),
-              quote.currency,
-            ),
-            totalPrice: this.formatMoney(
-              this.toNumber(item.totalPrice),
-              quote.currency,
-            ),
-          })),
+          orderItems: order.items.map((item) => {
+            const pricing = this.orderItemPricingDisplay(item);
+            return {
+              productName: item.product.name,
+              quantity: pricing.quantity?.toString() ?? '-',
+              unit: pricing.unit.replace(/_/g, ' '),
+              unitPrice:
+                pricing.unitPrice !== null
+                  ? this.formatMoney(pricing.unitPrice, quote.currency)
+                  : '-',
+              totalPrice: this.formatMoney(
+                this.toNumber(item.totalPrice),
+                quote.currency,
+              ),
+            };
+          }),
           subtotal: this.formatMoney(
             this.toNumber(order.subtotal),
             quote.currency,
@@ -1030,19 +1062,22 @@ export class OrdersService {
           orderNumber: order.id,
           orderStatus: order.status,
           orderMessage,
-          orderItems: order.items.map((item) => ({
-            productName: item.product.name,
-            quantity: this.toNumber(item.quantity).toString(),
-            unit: item.unit.replace(/_/g, ' '),
-            unitPrice: this.formatMoney(
-              this.toNumber(item.unitPrice),
-              currency,
-            ),
-            totalPrice: this.formatMoney(
-              this.toNumber(item.totalPrice),
-              currency,
-            ),
-          })),
+          orderItems: order.items.map((item) => {
+            const pricing = this.orderItemPricingDisplay(item);
+            return {
+              productName: item.product.name,
+              quantity: pricing.quantity?.toString() ?? '-',
+              unit: pricing.unit.replace(/_/g, ' '),
+              unitPrice:
+                pricing.unitPrice !== null
+                  ? this.formatMoney(pricing.unitPrice, currency)
+                  : '-',
+              totalPrice: this.formatMoney(
+                this.toNumber(item.totalPrice),
+                currency,
+              ),
+            };
+          }),
           subtotal: this.formatMoney(this.toNumber(order.subtotal), currency),
           serviceFee: this.formatMoney(
             this.toNumber(order.serviceFee),
@@ -1094,18 +1129,66 @@ export class OrdersService {
             db,
           )
       : await this.addressesService.getValidatedDefaultAddress(customer.id, db);
-    const buyPriceIds = [...new Set(dto.items.map((item) => item.buyPriceId))];
-    const buyPrices = await db.buyPrice.findMany({
-      where: { id: { in: buyPriceIds } },
-      include: { product: true },
-    });
+    const buyPriceIds = [
+      ...new Set(
+        dto.items
+          .filter((item) => item.buyPriceId)
+          .map((item) => item.buyPriceId!),
+      ),
+    ];
+    const productIds = [
+      ...new Set(
+        dto.items
+          .filter((item) => item.amount !== undefined)
+          .map((item) => item.productId!),
+      ),
+    ];
+    const buyPrices = buyPriceIds.length
+      ? await db.buyPrice.findMany({
+          where: { id: { in: buyPriceIds } },
+          include: {
+            product: true,
+            productOffering: {
+              include: {
+                variant: true,
+                brand: true,
+                package: true,
+              },
+            },
+          },
+        })
+      : [];
+    const amountProducts = productIds.length
+      ? await db.product.findMany({ where: { id: { in: productIds } } })
+      : [];
     const buyPriceById = new Map(
       buyPrices.map((buyPrice) => [buyPrice.id, buyPrice]),
+    );
+    const amountProductById = new Map(
+      amountProducts.map((product) => [product.id, product]),
     );
     const now = new Date();
 
     const items = dto.items.map((item): PreparedOrderItem => {
-      const buyPrice = buyPriceById.get(item.buyPriceId);
+      if (item.amount !== undefined) {
+        const product = amountProductById.get(item.productId!);
+
+        if (!product) {
+          throw new NotFoundException(
+            `Product ${item.productId} was not found`,
+          );
+        }
+
+        return {
+          productId: product.id,
+          productName: product.name,
+          pricingMode: OrderItemPricingMode.amount,
+          totalPrice: this.roundMoney(item.amount),
+          currency: 'NGN',
+        };
+      }
+
+      const buyPrice = buyPriceById.get(item.buyPriceId!);
 
       if (!buyPrice) {
         throw new NotFoundException(
@@ -1113,11 +1196,12 @@ export class OrdersService {
         );
       }
 
-      if (
-        !buyPrice.isActive ||
-        buyPrice.validFrom > now ||
-        (buyPrice.validUntil && buyPrice.validUntil < now)
-      ) {
+      // validUntil in the past doesn't make a price stale - prices are only
+      // regenerated when they change, so an untouched, still-active price
+      // with an elapsed validUntil is still correct. Only isActive (flipped
+      // off when a newer price supersedes this one) and validFrom (don't
+      // use a price before its scheduled start) gate availability.
+      if (!buyPrice.isActive || buyPrice.validFrom > now) {
         throw new BadRequestException(
           `Buy price ${item.buyPriceId} is not currently available`,
         );
@@ -1127,13 +1211,19 @@ export class OrdersService {
 
       return {
         productId: buyPrice.productId,
+        productOfferingId: buyPrice.productOfferingId ?? undefined,
         buyPriceId: buyPrice.id,
         marketId: buyPrice.marketId,
         productName: buyPrice.product.name,
+        variantName: buyPrice.productOffering?.variant?.name,
+        brandName: buyPrice.productOffering?.brand?.name,
+        packageName: buyPrice.productOffering?.package.name,
+        offeringSku: buyPrice.productOffering?.sku,
+        pricingMode: OrderItemPricingMode.unit,
         quantity: item.quantity,
-        unit: buyPrice.unit,
+        priceUnitId: buyPrice.priceUnitId,
         unitPrice,
-        totalPrice: this.roundMoney(unitPrice * item.quantity),
+        totalPrice: this.roundMoney(unitPrice * item.quantity!),
         currency: buyPrice.currency,
       };
     });
@@ -1545,17 +1635,21 @@ export class OrdersService {
       const payment = this.getLatestPayment(order);
       const common = this.toOrderExportCommon(order, payment);
 
-      return order.items.map((item) => ({
-        ...common,
-        itemId: item.id,
-        productId: item.productId,
-        productName: item.product.name,
-        quantity: this.toNumber(item.quantity),
-        unit: item.unit,
-        unitPrice: this.toNumber(item.unitPrice),
-        itemTotal: this.toNumber(item.totalPrice),
-        buyPriceId: item.buyPriceId ?? '',
-      }));
+      return order.items.map((item) => {
+        const pricing = this.orderItemPricingDisplay(item);
+        return {
+          ...common,
+          itemId: item.id,
+          productId: item.productId,
+          productName: item.product.name,
+          pricingMode: item.pricingMode,
+          quantity: pricing.quantity,
+          unit: pricing.unit,
+          unitPrice: pricing.unitPrice,
+          itemTotal: this.toNumber(item.totalPrice),
+          buyPriceId: item.buyPriceId ?? '',
+        };
+      });
     });
   }
 
@@ -1650,6 +1744,14 @@ export class OrdersService {
         include: {
           product: true,
           buyPrice: true,
+          productOffering: {
+            include: {
+              variant: true,
+              brand: true,
+              package: true,
+            },
+          },
+          priceUnit: true,
         },
       },
       payments: true,
@@ -1682,6 +1784,28 @@ export class OrdersService {
 
   private toNumber(value: Prisma.Decimal | number): number {
     return typeof value === 'number' ? value : value.toNumber();
+  }
+
+  /**
+   * Amount-based order items (customer stated a Naira amount instead of a
+   * quantity+unit, e.g. "N2000 tomatoes") have no quantity/unit/unitPrice -
+   * only a total. Everywhere an item's quantity/unit/unitPrice is displayed
+   * needs to branch on pricingMode rather than assume those fields exist.
+   */
+  private orderItemPricingDisplay(item: {
+    pricingMode: OrderItemPricingMode;
+    quantity: Prisma.Decimal | null;
+    unitPrice: Prisma.Decimal | null;
+    priceUnit: { code: string } | null;
+  }): { quantity: number | null; unit: string; unitPrice: number | null } {
+    if (item.pricingMode === OrderItemPricingMode.amount) {
+      return { quantity: null, unit: 'amount', unitPrice: null };
+    }
+    return {
+      quantity: this.toNumber(item.quantity!),
+      unit: item.priceUnit!.code,
+      unitPrice: this.toNumber(item.unitPrice!),
+    };
   }
 
   private roundMoney(value: number): number {
